@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GEO-PANEL | Monitoreo Satelital GPS Multiempresa</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet Map CSS & JS (100% Open Source) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- QR Code Generator Library (Open Source) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background-color: #0b1120;
+      color: #f1f5f9;
+    }
+    #map {
+      height: calc(100vh - 56px);
+      width: 100%;
+      z-index: 10;
+    }
+    .vehicle-marker {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9999px;
+      font-weight: 700;
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.3), 0 6px 14px rgba(0,0,0,0.55);
+      transition: transform 0.2s ease;
+    }
+    .vehicle-marker:hover {
+      transform: scale(1.14);
+    }
+    .marker-label {
+      background: rgba(15, 23, 42, 0.92);
+      color: #f8fafc;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 1px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body class="h-screen overflow-hidden select-none">
+
+  <!-- ================= PANTALLA DE LOGIN ================= -->
+  <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950 px-4">
+    <div class="w-full max-w-4xl grid md:grid-cols-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
+      
+      <!-- Columna Izquierda: Identidad GEO-PANEL -->
+      <div class="md:col-span-2 bg-gradient-to-br from-emerald-600 via-teal-700 to-slate-900 p-8 flex flex-col justify-between text-white">
+        <div>
+          <div class="inline-flex items-center gap-2 bg-white/10 backdrop-blur px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide uppercase mb-6">
+            <span class="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
+            Santa Cruz de la Sierra · Bolivia
+          </div>
+          <h1 class="text-3xl font-extrabold tracking-tight mb-2">GEO-PANEL</h1>
+          <p class="text-emerald-100 text-sm leading-relaxed">
+            Plataforma SaaS de Monitoreo Satelital GPS, Control de Flotas y Gestión Multiempresa.
+          </p>
+        </div>
+
+        <div class="space-y-3 text-xs text-emerald-100/90 mt-8">
+          <div class="flex items-center gap-2.5">
+            <span class="p-1.5 rounded-lg bg-white/10">📡</span>
+            <span>Motor GPS conectado a Traccar VPS</span>
+          </div>
+          <div class="flex items-center gap-2.5">
+            <span class="p-1.5 rounded-lg bg-white/10">🏢</span>
+            <span>Aislamiento Multiempresa 100% privado</span>
+          </div>
+          <div class="flex items-center gap-2.5">
+            <span class="p-1.5 rounded-lg bg-white/10">🛣️</span>
+            <span>Rutas, paradas y telemetría en tiempo real</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Columna Derecha: Formulario + Accesos Rápidos -->
+      <div class="md:col-span-3 p-8 flex flex-col justify-between">
+        <div>
+          <h2 class="text-xl font-bold text-white mb-1">Iniciar Sesión</h2>
+          <p class="text-xs text-slate-400 mb-6">Ingresa con tu cuenta o usa un perfil de prueba abajo en 1 clic</p>
+
+          <form id="login-form" class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">Correo electrónico</label>
+              <input id="login-email" type="email" required value="admin@geopanel.bo"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">Contraseña</label>
+              <input id="login-password" type="password" required value="admin123"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500" />
+            </div>
+            <div id="login-error" class="hidden text-xs text-rose-400 bg-rose-950/50 border border-rose-800 rounded-lg px-3 py-2"></div>
+            <button type="submit"
+              class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-emerald-900/40 transition">
+              Entrar a GEO-PANEL →
+            </button>
+          </form>
+        </div>
+
+        <!-- Selector rápido para demostrar Multiempresa -->
+        <div class="mt-6 pt-5 border-t border-slate-800">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2.5">
+            ⚡ Prueba rápida de Aislamiento Multiempresa (1 clic):
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button type="button" onclick="quickLogin('admin@geopanel.bo','admin123')"
+              class="text-left p-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-emerald-500/40 transition">
+              <div class="text-xs font-bold text-emerald-400">👑 Super Admin</div>
+              <div class="text-xs text-slate-400 truncate">Control Total + Traccar</div>
+            </button>
+            <button type="button" onclick="quickLogin('oriental@empresa1.bo','123456')"
+              class="text-left p-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700 transition">
+              <div class="text-xs font-bold text-sky-400">🏢 Empresa A</div>
+              <div class="text-xs text-slate-400 truncate">Transporte Oriental</div>
+            </button>
+            <button type="button" onclick="quickLogin('distribuidora@empresa2.bo','123456')"
+              class="text-left p-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700 transition">
+              <div class="text-xs font-bold text-amber-400">🏢 Empresa B</div>
+              <div class="text-xs text-slate-400 truncate">Distribuidora SCZ</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= APLICACIÓN PRINCIPAL ================= -->
+  <div id="app-shell" class="hidden h-screen flex flex-col">
+
+    <!-- Barra Superior -->
+    <header class="h-14 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between z-30">
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center font-black text-white text-sm shadow">
+            GP
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="font-extrabold text-sm tracking-tight text-white">GEO-PANEL</span>
+              <span id="header-role-badge" class="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                SUPERADMIN
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Navegación de Módulos -->
+        <nav class="hidden md:flex items-center gap-1 ml-4 bg-slate-800/70 p-1 rounded-xl border border-slate-700/60">
+          <button onclick="switchTab('map')" id="tab-btn-map"
+            class="px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 text-white transition">
+            🗺️ Monitoreo en Vivo
+          </button>
+          <button onclick="switchTab('companies')" id="tab-btn-companies"
+            class="px-3 py-1 rounded-lg text-xs font-semibold text-slate-300 hover:text-white transition">
+            🏢 Empresas y Clientes
+          </button>
+          <button onclick="switchTab('traccar')" id="tab-btn-traccar"
+            class="px-3 py-1 rounded-lg text-xs font-semibold text-slate-300 hover:text-white transition">
+            ⚙️ Conexión Traccar VPS
+          </button>
+        </nav>
+      </div>
+
+      <!-- Estado de Traccar y Usuario -->
+      <div class="flex items-center gap-3">
+        <button id="traccar-status-pill" onclick="openTraccarTabIfAdmin()"
+          class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition">
+          <span id="traccar-status-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+          <span id="traccar-status-text">Conectar Traccar VPS</span>
+        </button>
+
+        <div class="hidden sm:block text-right">
+          <div id="header-user-name" class="text-xs font-semibold text-white">Usuario</div>
+          <div id="header-company-name" class="text-xs text-slate-400">Administración Central</div>
+        </div>
+
+        <button onclick="logout()"
+          class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-slate-300 hover:text-rose-300 border border-slate-700 text-xs font-medium transition">
+          Salir
+        </button>
+      </div>
+    </header>
+
+    <!-- CONTENIDO: PESTAÑA 1 - MAPA CON PANEL FLOTANTE Y TARJETA DE DETALLES -->
+    <div id="tab-map" class="flex-1 relative overflow-hidden">
+      <!-- Mapa a Pantalla Completa -->
+      <div id="map"></div>
+
+      <!-- Botón para reabrir panel flotante cuando está oculto -->
+      <button id="show-floating-panel-btn" onclick="toggleFloatingPanel(true)"
+        class="hidden absolute top-4 left-4 z-20 px-3.5 py-2.5 rounded-xl bg-slate-900/95 border border-slate-700 text-xs font-bold text-white shadow-xl flex items-center gap-2">
+        <span>📋 Mostrar Dispositivos</span>
+      </button>
+
+      <!-- PANEL FLOTANTE IZQUIERDO (Estilo Traccar Mejorado para GEO-PANEL) -->
+      <aside id="floating-devices-panel"
+        class="absolute top-3 left-3 bottom-3 w-80 sm:w-96 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-2xl shadow-2xl flex flex-col z-20 overflow-hidden">
+        
+        <!-- Cabecera: Filtro de Empresa (solo SuperAdmin) -->
+        <div id="superadmin-company-filter-box" class="px-3 pt-2.5 pb-2 border-b border-slate-800 bg-slate-950/60 hidden">
+          <div class="flex items-center justify-between gap-2">
+            <select id="company-filter-select" onchange="onFilterCompanyChange()"
+              class="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-medium text-white focus:outline-none focus:border-emerald-500">
+              <option value="ALL">🏢 Todas las empresas (Vista Global)</option>
+            </select>
+            <button onclick="toggleFloatingPanel(false)" title="Ocultar lista para ver mapa completo"
+              class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">
+              ◀
+            </button>
+          </div>
+        </div>
+
+        <!-- Barra Superior de Búsqueda + Botón "+" (Añadir Dispositivo) -->
+        <div class="p-2.5 border-b border-slate-800 flex items-center gap-2 bg-slate-900">
+          <button onclick="loadLiveFleet(true)" title="Sincronizar ahora con Traccar"
+            class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-xs text-emerald-400 shrink-0">
+            🔄
+          </button>
+          <input id="vehicle-search" type="text" oninput="renderVehicleList()"
+            placeholder="Buscar Dispositivos..."
+            class="flex-1 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500" />
+          <button onclick="openDeviceModal()" title="Añadir nuevo celular o GPS (+)"
+            class="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-base flex items-center justify-center shadow shrink-0 transition">
+            +
+          </button>
+        </div>
+
+        <!-- Contadores Rápidos -->
+        <div class="grid grid-cols-3 gap-1.5 px-2.5 py-2 border-b border-slate-800 bg-slate-950/40 text-center">
+          <div class="rounded-lg py-1 bg-slate-800/60">
+            <span id="stat-total" class="text-xs font-extrabold text-white">0</span>
+            <span class="text-xs text-slate-400 ml-1">Total</span>
+          </div>
+          <div class="rounded-lg py-1 bg-emerald-950/40">
+            <span id="stat-online" class="text-xs font-extrabold text-emerald-400">0</span>
+            <span class="text-xs text-emerald-300/80 ml-1">Activos</span>
+          </div>
+          <div class="rounded-lg py-1 bg-sky-950/40">
+            <span id="stat-moving" class="text-xs font-extrabold text-sky-400">0</span>
+            <span class="text-xs text-sky-300/80 ml-1">En Ruta</span>
+          </div>
+        </div>
+
+        <!-- Lista de Dispositivos (ARNOLD, milton, PABLO...) -->
+        <div id="vehicle-list" class="flex-1 overflow-y-auto divide-y divide-slate-800/80"></div>
+
+        <!-- Panel de Historial y Paradas (cuando se consulta Ruta) -->
+        <div id="history-panel" class="hidden p-3 border-t border-slate-800 bg-slate-950 space-y-2">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-bold text-sky-400">🛣️ Historial de Recorrido</div>
+              <div id="history-vehicle-title" class="text-xs font-semibold text-white truncate">Vehículo</div>
+            </div>
+            <button onclick="clearHistoryRoute()" class="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800">
+              Cerrar ✕
+            </button>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button onclick="loadVehicleHistory(3)" class="flex-1 py-1 rounded-lg bg-slate-800 hover:bg-sky-600 text-xs font-semibold transition">Últ. 3h</button>
+            <button onclick="loadVehicleHistory(6)" class="flex-1 py-1 rounded-lg bg-sky-600 text-white text-xs font-semibold transition">Últ. 6h</button>
+            <button onclick="loadVehicleHistory(24)" class="flex-1 py-1 rounded-lg bg-slate-800 hover:bg-sky-600 text-xs font-semibold transition">Hoy (24h)</button>
+          </div>
+          <div class="grid grid-cols-3 gap-1.5 text-center">
+            <div class="bg-slate-900 p-1.5 rounded-lg border border-slate-800">
+              <div id="hist-dist" class="text-xs font-bold text-white">0 km</div>
+              <div class="text-xs text-slate-400">Distancia</div>
+            </div>
+            <div class="bg-slate-900 p-1.5 rounded-lg border border-slate-800">
+              <div id="hist-maxspeed" class="text-xs font-bold text-amber-400">0 km/h</div>
+              <div class="text-xs text-slate-400">Vel. Máx</div>
+            </div>
+            <div class="bg-slate-900 p-1.5 rounded-lg border border-slate-800">
+              <div id="hist-stops" class="text-xs font-bold text-rose-400">0</div>
+              <div class="text-xs text-slate-400">Paradas</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Barra Inferior Estilo Traccar (Mapa | Reportes | Ajustes | Cuenta) -->
+        <div class="grid grid-cols-4 border-t border-slate-800 bg-slate-950/90 py-2 text-center text-xs font-semibold">
+          <button onclick="switchTab('map')" class="text-emerald-400 flex flex-col items-center gap-0.5">
+            <span>🗺️</span><span>Mapa</span>
+          </button>
+          <button onclick="if(selectedVehicleId){openVehicleHistory(selectedVehicleId)}else{alert('Selecciona primero un dispositivo de la lista')}"
+            class="text-slate-400 hover:text-white flex flex-col items-center gap-0.5">
+            <span>📊</span><span>Reportes</span>
+          </button>
+          <button onclick="switchTab('companies')" class="text-slate-400 hover:text-white flex flex-col items-center gap-0.5">
+            <span>🏢</span><span>Empresas</span>
+          </button>
+          <button onclick="openTraccarTabIfAdmin()" class="text-slate-400 hover:text-white flex flex-col items-center gap-0.5">
+            <span>⚙️</span><span>Ajustes</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- TARJETA FLOTANTE DE DETALLES DEL DISPOSITIVO EN EL MAPA (Como la captura de ARNOLD) -->
+      <div id="map-device-card"
+        class="hidden absolute bottom-6 right-6 z-20 w-80 bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+          <div>
+            <h3 id="card-device-name" class="text-sm font-extrabold text-white">ARNOLD</h3>
+            <span id="card-device-company" class="text-xs text-emerald-400 font-medium">Transporte Oriental SRL</span>
+          </div>
+          <button onclick="closeDeviceCard()" class="text-slate-400 hover:text-white text-sm px-2 py-0.5 rounded-lg bg-slate-800">
+            ✕
+          </button>
+        </div>
+
+        <div class="p-4 space-y-2 text-xs">
+          <div class="flex justify-between gap-2">
+            <span class="text-slate-400">Hora ajustada:</span>
+            <span id="card-device-time" class="font-semibold text-white text-right">--</span>
+          </div>
+          <div class="flex justify-between items-start gap-2">
+            <span class="text-slate-400 shrink-0">Dirección Calle:</span>
+            <span id="card-device-street" class="text-sky-400 font-semibold text-right cursor-pointer hover:underline"
+              onclick="revealStreetAddress()">
+              Mostrar calle
+            </span>
+          </div>
+          <div class="flex justify-between gap-2">
+            <span class="text-slate-400">Velocidad:</span>
+            <span id="card-device-speed" class="font-semibold text-white">0.00 km/h</span>
+          </div>
+          <div class="flex justify-between gap-2">
+            <span class="text-slate-400">Distancia Total:</span>
+            <span id="card-device-distance" class="font-bold text-emerald-400">0.00 Km</span>
+          </div>
+          <div class="flex justify-between gap-2">
+            <span class="text-slate-400">Batería:</span>
+            <span id="card-device-battery" class="font-bold text-emerald-400">--%</span>
+          </div>
+          <div class="flex justify-between gap-2">
+            <span class="text-slate-400">ID / Teléfono:</span>
+            <span id="card-device-uniqueid" class="font-medium text-slate-300">--</span>
+          </div>
+        </div>
+
+        <!-- Barra de Acciones Inferior (Ruta, Seguir, QR, Editar, Eliminar) -->
+        <div class="px-3 py-2.5 border-t border-slate-800 bg-slate-950/70 flex items-center justify-between gap-1.5">
+          <button onclick="centerOnSelected()" title="Centrar y seguir en el mapa"
+            class="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-emerald-600/30 border border-slate-700 text-xs font-semibold text-emerald-300 transition">
+            🎯 Seguir
+          </button>
+          <button onclick="openVehicleHistory(selectedVehicleId)" title="Ver Recorrido y Paradas"
+            class="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-sky-600/30 border border-slate-700 text-xs font-semibold text-sky-300 transition">
+            🛣️ Ruta
+          </button>
+          <button onclick="openQrModalForSelected()" title="Código QR para celular"
+            class="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition">
+            📲 QR
+          </button>
+          <button onclick="openDeviceModal(selectedVehicleId)" title="Editar Dispositivo"
+            class="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-amber-600/30 border border-slate-700 text-xs font-semibold text-amber-300 transition">
+            ✏️
+          </button>
+          <button onclick="deleteSelectedDevice()" title="Eliminar Dispositivo"
+            class="py-1.5 px-2.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-800/60 text-xs font-semibold text-rose-300 transition">
+            🗑️
+          </button>
+        </div>
+      </div>
+
+      <!-- Controles flotantes arriba a la derecha -->
+      <div class="absolute top-3 right-3 z-20 flex items-center gap-2">
+        <label class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700 text-xs text-slate-200 shadow-lg cursor-pointer">
+          <input id="toggle-demos" type="checkbox" onchange="loadLiveFleet(false)" class="accent-emerald-500" />
+          <span>Ver demos SCZ</span>
+        </label>
+        <button onclick="centerMapOnFleet()"
+          class="px-3 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 backdrop-blur border border-slate-700 text-xs font-semibold text-white shadow-lg transition">
+          🎯 Centrar Flota
+        </button>
+      </div>
+    </div>
+
+    <!-- CONTENIDO: PESTAÑA 2 - GESTIÓN MULTIEMPRESA Y CLIENTES -->
+    <div id="tab-companies" class="hidden flex-1 overflow-y-auto p-6 bg-slate-950">
+      <div class="max-w-6xl mx-auto space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div>
+            <h2 class="text-xl font-bold text-white">🏢 Gestión Multiempresa y Asignación de Dispositivos</h2>
+            <p class="text-xs text-slate-400 mt-0.5">
+              Administra tus empresas clientes, sus cuentas de acceso y a qué empresa pertenece cada dispositivo de Traccar.
+            </p>
+          </div>
+          <button onclick="openDeviceModal()"
+            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition">
+            + Añadir Nuevo Dispositivo (Celular / GPS)
+          </button>
+        </div>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+          <!-- Formulario Nueva Empresa + Usuario Cliente -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 h-fit">
+            <h3 class="text-sm font-bold text-emerald-400 uppercase tracking-wider">+ Registrar Nueva Empresa Cliente</h3>
+            <form id="create-company-form" class="space-y-3">
+              <div>
+                <label class="block text-xs text-slate-300 mb-1">Nombre de la Empresa *</label>
+                <input id="new-comp-name" type="text" required placeholder="Ej. Constructora del Oriente SRL"
+                  class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs text-slate-300 mb-1">NIT / CI</label>
+                  <input id="new-comp-nit" type="text" placeholder="Ej. 1029384012"
+                    class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-300 mb-1">WhatsApp Soporte</label>
+                  <input id="new-comp-phone" type="text" placeholder="+591 700-00000"
+                    class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-300 mb-1">Plan Mensual</label>
+                <select id="new-comp-plan" class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white">
+                  <option>Plan Básico (2 a 5 vehículos)</option>
+                  <option selected>Plan PyME (6 a 15 vehículos)</option>
+                  <option>Plan Corporativo (+15 vehículos)</option>
+                </select>
+              </div>
+
+              <div class="pt-2 border-t border-slate-800">
+                <div class="text-xs font-semibold text-sky-400 mb-2">👤 Usuario de Acceso para el Cliente</div>
+                <div class="space-y-2.5">
+                  <input id="new-comp-admin-name" type="text" required placeholder="Nombre del encargado"
+                    class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+                  <input id="new-comp-admin-email" type="email" required placeholder="correo@cliente.com.bo"
+                    class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+                  <input id="new-comp-admin-pass" type="text" required value="123456" placeholder="Contraseña inicial"
+                    class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+                </div>
+              </div>
+
+              <button type="submit"
+                class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs shadow transition">
+                Crear Empresa y Usuario Cliente
+              </button>
+            </form>
+          </div>
+
+          <!-- Lista de Empresas y Asignación de Dispositivos -->
+          <div class="lg:col-span-2 space-y-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <h3 class="text-sm font-bold text-white mb-3">Empresas Registradas en GEO-PANEL</h3>
+              <div id="companies-table-body" class="grid sm:grid-cols-2 gap-3"></div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <div class="flex items-center justify-between mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">📡 Dispositivos Sincronizados (Asignación por Empresa)</h3>
+                  <p class="text-xs text-slate-400">Cambia a qué empresa pertenece cada celular/GPS o haz clic en Editar (✏️).</p>
+                </div>
+              </div>
+              <div id="vehicles-assign-list" class="space-y-2.5"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTENIDO: PESTAÑA 3 - CONEXIÓN AL SERVIDOR TRACCAR VPS -->
+    <div id="tab-traccar" class="hidden flex-1 overflow-y-auto p-6 bg-slate-950">
+      <div class="max-w-2xl mx-auto bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 shadow-xl">
+        <div class="border-b border-slate-800 pb-4">
+          <span class="text-xs font-bold uppercase tracking-wider text-emerald-400">Motor de Posicionamiento</span>
+          <h2 class="text-xl font-bold text-white mt-0.5">⚙️ Conexión con tu Traccar Server (VPS Hostinger)</h2>
+          <p class="text-xs text-slate-400 mt-1">
+            Ingresa el correo y contraseña con los que entras a tu panel de Traccar. GEO-PANEL sincronizará automáticamente tus celulares Android y equipos GPS reales.
+          </p>
+        </div>
+
+        <form id="traccar-config-form" class="space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">URL de tu Servidor Traccar (en Coolify / VPS)</label>
+            <input id="traccar-url" type="url" required
+              value="http://traccar-6dsuipf5kignfxsa0658aj69.187.127.33.214.sslip.io"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500" />
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">Usuario / Correo de Traccar *</label>
+              <input id="traccar-email" type="text" required placeholder="Ej. admin o tu@correo.com"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">Contraseña de Traccar *</label>
+              <input id="traccar-password" type="password" required placeholder="Ingresa tu contraseña de Traccar"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500" />
+            </div>
+          </div>
+
+          <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer pt-1">
+            <input id="traccar-hide-demos" type="checkbox" checked class="accent-emerald-500" />
+            <span>Ocultar vehículos de demostración al sincronizar mis dispositivos reales</span>
+          </label>
+
+          <div id="traccar-feedback" class="hidden rounded-xl p-3.5 text-xs"></div>
+
+          <div class="flex items-center justify-end gap-3 pt-2">
+            <button type="submit" id="traccar-save-btn"
+              class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-emerald-900/40 transition">
+              🔌 Probar Conexión y Sincronizar Dispositivos
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ================= MODAL FLOTANTE: AÑADIR / EDITAR DISPOSITIVO (Igual a tu captura de Traccar) ================= -->
+  <div id="device-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-8">
+      <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+        <div>
+          <h3 id="device-modal-title" class="text-base font-bold text-white">📱 Añadir / Editar Dispositivo</h3>
+          <p class="text-xs text-slate-400">Se guarda automáticamente en tu servidor Traccar VPS y en GEO-PANEL</p>
+        </div>
+        <button onclick="closeDeviceModal()" class="text-slate-400 hover:text-white text-sm px-2.5 py-1 rounded-lg bg-slate-800">
+          ✕
+        </button>
+      </div>
+
+      <form id="device-modal-form" class="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+        <input type="hidden" id="dm-id" />
+
+        <!-- SECCIÓN 1: OBLIGATORIO -->
+        <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-3">
+          <div class="text-xs font-bold uppercase tracking-wider text-emerald-400">Obligatorio</div>
+          <div>
+            <label class="block text-xs text-slate-300 mb-1">Nombre *</label>
+            <input id="dm-name" type="text" required placeholder="Ej. ARNOLD, milton, Camioneta #01"
+              class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-300 mb-1">Identificador *</label>
+            <input id="dm-uniqueid" type="text" required placeholder="Ej. 849302 o IMEI del equipo"
+              class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500" />
+            <p class="text-xs text-slate-400 mt-1">
+              El IMEI, número de serie u otro ID. Debe ser igual que el identificador del dispositivo que reporta al servidor.
+            </p>
+          </div>
+        </div>
+
+        <!-- SECCIÓN 2: EXTRA -->
+        <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-3">
+          <div class="text-xs font-bold uppercase tracking-wider text-sky-400">Extra</div>
+
+          <div>
+            <label class="block text-xs text-slate-300 mb-1">Grupo / Empresa Cliente *</label>
+            <select id="dm-company"
+              class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500">
+            </select>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-300 mb-1">Teléfono</label>
+              <input id="dm-phone" type="text" placeholder="Ej. +591 77012345"
+                class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-300 mb-1">Modelo / Placa</label>
+              <input id="dm-plate" type="text" placeholder="Ej. Android / 4582-TKR"
+                class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+            </div>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-300 mb-1">Contacto / Chofer</label>
+              <input id="dm-driver" type="text" placeholder="Nombre del chofer o encargado"
+                class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-300 mb-1">Categoría</label>
+              <select id="dm-category"
+                class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white">
+                <option value="default">📍 Predeterminado</option>
+                <option value="person">📱 Celular / Persona</option>
+                <option value="car">🚗 Automóvil / Camioneta</option>
+                <option value="truck">🚚 Camión</option>
+                <option value="van">🚐 Furgón / Minibús</option>
+                <option value="motorcycle">🏍️ Motocicleta</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-3 items-center pt-1">
+            <div>
+              <label class="block text-xs text-slate-300 mb-1">Caducidad (Vencimiento Suscripción)</label>
+              <input id="dm-expiration" type="date"
+                class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
+            </div>
+            <label class="flex items-center gap-2 text-xs text-slate-200 cursor-pointer pt-4">
+              <input id="dm-disabled" type="checkbox" class="accent-rose-500 w-4 h-4" />
+              <span>Deshabilitado</span>
+            </label>
+          </div>
+
+          <!-- Botón CÓDIGO QR (igual al formulario de Traccar) -->
+          <div class="pt-2">
+            <button type="button" onclick="toggleQrPreviewInModal()"
+              class="w-full py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold tracking-wider uppercase text-sky-300 transition">
+              📲 CÓDIGO QR (Para configurar Traccar Client)
+            </button>
+          </div>
+
+          <!-- Contenedor de Código QR desplegable -->
+          <div id="dm-qr-box" class="hidden bg-slate-900 border border-slate-700 rounded-xl p-4 text-center space-y-2">
+            <div id="dm-qr-canvas" class="inline-block bg-white p-3 rounded-xl mx-auto"></div>
+            <div class="text-xs font-bold text-emerald-400">Escanea o ingresa estos datos en Traccar Client:</div>
+            <div class="text-xs text-slate-300">
+              URL del Servidor: <code class="text-emerald-300 font-bold select-all">http://187.127.33.214:5055</code>
+            </div>
+            <div class="text-xs text-slate-300">
+              Identificador: <code id="dm-qr-id-text" class="text-sky-300 font-bold select-all">--</code>
+            </div>
+          </div>
+        </div>
+
+        <div id="dm-feedback" class="hidden rounded-xl p-3 text-xs"></div>
+
+        <!-- Botones Cancelar y Guardar -->
+        <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+          <button type="button" onclick="closeDeviceModal()"
+            class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+            CANCELAR
+          </button>
+          <button type="submit" id="dm-save-btn"
+            class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-900/40 transition">
+            GUARDAR
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "geo-panel",
+  "version": "0.1.0",
+  "description": "GEO-PANEL - Sistema SaaS de monitoreo y gestión GPS multiempresa (Santa Cruz de la Sierra, Bolivia)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "private": true
+}
