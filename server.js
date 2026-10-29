@@ -6,19 +6,44 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const DB_TMP_FILE = path.join(DATA_DIR, 'db.json.tmp');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const SERVER_START_TIME = Date.now();
 
 // Asegurar carpeta de datos
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+// Utilidades de Hashing de Contraseñas (scrypt + salt, sin dependencias externas)
+function hashPassword(plainPassword) {
+  if (!plainPassword) return '';
+  if (String(plainPassword).startsWith('scrypt$')) return plainPassword;
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(plainPassword), salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyPassword(plainPassword, storedPassword) {
+  if (!plainPassword || !storedPassword) return false;
+  if (String(storedPassword).startsWith('scrypt$')) {
+    const parts = String(storedPassword).split('$');
+    if (parts.length !== 3) return false;
+    const [, salt, originalHash] = parts;
+    const derived = crypto.scryptSync(String(plainPassword), salt, 64).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(originalHash, 'hex'), Buffer.from(derived, 'hex'));
+  }
+  // Compatibilidad con contraseñas en texto plano previas (se migran automáticamente al iniciar)
+  return String(plainPassword) === String(storedPassword);
+}
+
 // Datos iniciales por defecto (Santa Cruz de la Sierra, Bolivia)
+// Soporta Variables de Entorno de Coolify (The 12-Factor App Factor III)
 const DEFAULT_DB = {
   traccarConfig: {
-    url: 'http://traccar-6dsuipf5kignfxsa0658aj69.187.127.33.214.sslip.io',
-    email: '',
-    password: '',
+    url: process.env.TRACCAR_URL || 'http://traccar-6dsuipf5kignfxsa0658aj69.187.127.33.214.sslip.io',
+    email: process.env.TRACCAR_EMAIL || 'plara@sirtsc.com',
+    password: process.env.TRACCAR_PASSWORD || 'Martin0411.',
     connected: false,
     lastSync: null,
     lastError: null,
@@ -145,32 +170,119 @@ const DEFAULT_DB = {
   ]
 };
 
+let memoryDb = null;
+
+function ensureEncryptedUsers(db) {
+  let changed = false;
+  if (Array.isArray(db.users)) {
+    for (const u of db.users) {
+      if (u.password && !String(u.password).startsWith('scrypt$')) {
+        u.password = hashPassword(u.password);
+        changed = true;
+      }
+    }
+  }
+  // Asegurar que si hay variables de entorno o credenciales por defecto, se mantengan si estaban vacías
+  if (db.traccarConfig) {
+    if (!db.traccarConfig.url && DEFAULT_DB.traccarConfig.url) {
+      db.traccarConfig.url = DEFAULT_DB.traccarConfig.url;
+      changed = true;
+    }
+    if (!db.traccarConfig.email && DEFAULT_DB.traccarConfig.email) {
+      db.traccarConfig.email = DEFAULT_DB.traccarConfig.email;
+      changed = true;
+    }
+    if (!db.traccarConfig.password && DEFAULT_DB.traccarConfig.password) {
+      db.traccarConfig.password = DEFAULT_DB.traccarConfig.password;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function loadDb() {
+  if (memoryDb) return memoryDb;
   try {
     if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2), 'utf8');
-      return JSON.parse(JSON.stringify(DEFAULT_DB));
+      memoryDb = JSON.parse(JSON.stringify(DEFAULT_DB));
+      ensureEncryptedUsers(memoryDb);
+      saveDb(memoryDb);
+      return memoryDb;
     }
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    const raw = fs.readFileSync(DB_FILE, 'utf8');
+    memoryDb = JSON.parse(raw);
+    if (ensureEncryptedUsers(memoryDb)) {
+      saveDb(memoryDb);
+    }
+    return memoryDb;
   } catch (err) {
-    console.error('Error cargando base de datos local:', err);
-    return JSON.parse(JSON.stringify(DEFAULT_DB));
+    console.error('Error cargando base de datos local, restaurando respaldo seguro:', err.message);
+    memoryDb = JSON.parse(JSON.stringify(DEFAULT_DB));
+    ensureEncryptedUsers(memoryDb);
+    return memoryDb;
   }
 }
 
+// Escritura atómica en disco (escribe primero en .tmp y renombra para evitar corrupción si se corta la luz)
 function saveDb(db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
+  memoryDb = db;
+  try {
+    const payload = JSON.stringify(db, null, 2);
+    fs.writeFileSync(DB_TMP_FILE, payload, 'utf8');
+    fs.renameSync(DB_TMP_FILE, DB_FILE);
+  } catch (err) {
+    console.error('Error guardando base de datos de forma atómica:', err.message);
+  }
 }
 
-// Sesiones firmadas y persistentes (no se pierden al reiniciar el servidor)
+// Protección contra ataques de Fuerza Bruta en Login (Rate Limiting por IP)
+const loginAttemptsByIp = new Map();
+const MAX_LOGIN_ATTEMPTS = 6;
+const LOGIN_LOCKOUT_MS = 60 * 1000; // 1 minuto de bloqueo tras 6 fallos seguidos
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) return String(forwarded).split(',')[0].trim();
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+function checkLoginRateLimit(ip) {
+  const record = loginAttemptsByIp.get(ip);
+  if (!record) return { allowed: true };
+  if (Date.now() - record.lastAttempt > LOGIN_LOCKOUT_MS) {
+    loginAttemptsByIp.delete(ip);
+    return { allowed: true };
+  }
+  if (record.count >= MAX_LOGIN_ATTEMPTS) {
+    const waitSec = Math.ceil((LOGIN_LOCKOUT_MS - (Date.now() - record.lastAttempt)) / 1000);
+    return { allowed: false, waitSec };
+  }
+  return { allowed: true };
+}
+
+function recordFailedLogin(ip) {
+  const record = loginAttemptsByIp.get(ip) || { count: 0, lastAttempt: 0 };
+  record.count += 1;
+  record.lastAttempt = Date.now();
+  loginAttemptsByIp.set(ip, record);
+}
+
+function clearFailedLogin(ip) {
+  loginAttemptsByIp.delete(ip);
+}
+
+// Sesiones firmadas con HMAC-SHA256 y expiración (sin puertas traseras)
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'geopanel-scz-bolivia-secret-key-2026';
+const SESSION_TTL_MS = 7 * 24 * 3600 * 1000; // 7 días de validez
 
 function createAuthToken(userId, db) {
-  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(String(userId)).digest('hex');
-  const token = `uid.${userId}.${sig}`;
+  const issuedAt = Date.now();
+  const payload = `${userId}.${issuedAt}`;
+  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
+  const token = `uid.${payload}.${sig}`;
   if (db) {
     db.sessions = db.sessions || {};
-    db.sessions[token] = userId;
+    db.sessions[token] = { userId, issuedAt };
     saveDb(db);
   }
   return token;
@@ -181,33 +293,43 @@ function getAuthUser(req, db) {
   const token = authHeader.replace('Bearer ', '').trim();
   if (!token) return null;
 
-  // 1. Verificar token firmado (sobrevive reinicios sin depender de RAM)
+  // 1. Verificar token firmado con HMAC-SHA256 (uid.<userId>.<issuedAt>.<sig> o formato uid.<userId>.<sig>)
   if (token.startsWith('uid.')) {
     const parts = token.split('.');
-    if (parts.length === 3) {
-      const userId = parts[1];
+    if (parts.length === 4) {
+      const [, userId, issuedAtStr, sig] = parts;
+      const issuedAt = Number(issuedAtStr);
+      if (!issuedAt || Date.now() - issuedAt > SESSION_TTL_MS) return null;
+      const expectedSig = crypto
+        .createHmac('sha256', TOKEN_SECRET)
+        .update(`${userId}.${issuedAtStr}`)
+        .digest('hex');
+      if (
+        sig.length === expectedSig.length &&
+        crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
+      ) {
+        return db.users.find((u) => u.id === userId) || null;
+      }
+    } else if (parts.length === 3) {
+      const [, userId, sig] = parts;
       const expectedSig = crypto
         .createHmac('sha256', TOKEN_SECRET)
         .update(String(userId))
         .digest('hex');
-      if (parts[2] === expectedSig) {
+      if (
+        sig.length === expectedSig.length &&
+        crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
+      ) {
         return db.users.find((u) => u.id === userId) || null;
       }
     }
   }
 
-  // 2. Verificar sesiones guardadas en db.json
+  // 2. Verificar sesiones explícitamente registradas en db.json
   if (db.sessions && db.sessions[token]) {
-    const userId = db.sessions[token];
+    const entry = db.sessions[token];
+    const userId = typeof entry === 'string' ? entry : entry.userId;
     return db.users.find((u) => u.id === userId) || null;
-  }
-
-  // 3. Compatibilidad con sesión previa en navegador tras reinicio con --watch
-  if (/^[a-f0-9]{48}$/i.test(token)) {
-    db.sessions = db.sessions || {};
-    db.sessions[token] = 'usr-admin';
-    saveDb(db);
-    return db.users.find((u) => u.id === 'usr-admin') || null;
   }
 
   return null;
@@ -433,9 +555,66 @@ async function syncWithTraccar(db) {
   }
 }
 
+// Control de sincronización con Traccar (Singleflight + Cooldown anti-avalancha)
+let activeSyncPromise = null;
+let lastSyncTimestampMs = 0;
+const MIN_SYNC_INTERVAL_MS = 4000; // Máximo 1 petición a Traccar cada 4 segundos sin importar cuántos clientes abran el mapa
+
+function triggerTraccarSync(db, force = false) {
+  const cfg = db.traccarConfig;
+  if (!cfg || !cfg.url || !cfg.email || !cfg.password) {
+    return Promise.resolve({ synced: 0, connected: false, message: 'Sin credenciales configuradas' });
+  }
+  const now = Date.now();
+  if (!force && now - lastSyncTimestampMs < MIN_SYNC_INTERVAL_MS && cfg.connected) {
+    return Promise.resolve({
+      connected: cfg.connected,
+      lastSync: cfg.lastSync,
+      cached: true
+    });
+  }
+  if (activeSyncPromise) {
+    return activeSyncPromise;
+  }
+  activeSyncPromise = syncWithTraccar(db).finally(() => {
+    lastSyncTimestampMs = Date.now();
+    activeSyncPromise = null;
+  });
+  return activeSyncPromise;
+}
+
+function sanitizeVehicleForUser(v, user, companies) {
+  const comp = companies.find((c) => c.id === v.companyId);
+  const clean = {
+    id: v.id,
+    traccarDeviceId: v.traccarDeviceId,
+    uniqueId: v.uniqueId,
+    name: v.name,
+    phone: v.phone || '',
+    plate: v.plate || '',
+    driver: v.driver || '',
+    companyId: v.companyId,
+    companyName: comp ? comp.name : 'Sin empresa asignada',
+    type: v.type || 'default',
+    disabled: !!v.disabled,
+    isDemo: !!v.isDemo,
+    traccarStatus: v.traccarStatus || 'offline',
+    lastUpdate: v.lastUpdate || null,
+    lastPosition: v.lastPosition || null
+  };
+  if (user.role === 'SUPERADMIN') {
+    clean.expirationTime = v.expirationTime || null;
+  }
+  return clean;
+}
+
 function sendJson(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Cache-Control': 'no-store',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
@@ -482,15 +661,39 @@ const server = http.createServer(async (req, res) => {
   const db = loadDb();
 
   try {
-    // 1. Autenticación: Login
+    // 0. Health Check para Coolify / Docker / Monitoreo SRE
+    if ((pathname === '/api/health' || pathname === '/health') && req.method === 'GET') {
+      return sendJson(res, 200, {
+        status: 'ok',
+        service: 'geo-panel',
+        uptimeSeconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000),
+        traccarConnected: !!db.traccarConfig?.connected,
+        lastSync: db.traccarConfig?.lastSync || null,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // 1. Autenticación: Login (con Rate Limiting por IP y verificación scrypt)
     if (pathname === '/api/auth/login' && req.method === 'POST') {
+      const clientIp = getClientIp(req);
+      const rateStatus = checkLoginRateLimit(clientIp);
+      if (!rateStatus.allowed) {
+        return sendJson(res, 429, {
+          error: `Demasiados intentos fallidos. Espera ${rateStatus.waitSec} segundos antes de volver a intentar.`
+        });
+      }
+
       const { email, password } = await parseBody(req);
       const user = db.users.find(
-        (u) => u.email.toLowerCase() === String(email || '').toLowerCase().trim() && u.password === password
+        (u) =>
+          u.email.toLowerCase() === String(email || '').toLowerCase().trim() &&
+          verifyPassword(password, u.password)
       );
       if (!user) {
+        recordFailedLogin(clientIp);
         return sendJson(res, 401, { error: 'Correo o contraseña incorrectos' });
       }
+      clearFailedLogin(clientIp);
       const token = createAuthToken(user.id, db);
       const company = db.companies.find((c) => c.id === user.companyId) || null;
       return sendJson(res, 200, {
@@ -552,22 +755,22 @@ const server = http.createServer(async (req, res) => {
       }
 
       saveDb(db);
-      const syncResult = await syncWithTraccar(db);
+      const syncResult = await triggerTraccarSync(db, true);
       return sendJson(res, 200, {
-        message: `Conectado exitosamente a Traccar. Dispositivos detectados: ${syncResult.totalTraccarDevices}`,
+        message: `Conectado exitosamente a Traccar. Dispositivos detectados: ${syncResult.totalTraccarDevices ?? 0}`,
         ...syncResult
       });
     }
 
-    // 4. Flota en tiempo real (con aislamiento multiempresa estricto)
+    // 4. Flota en tiempo real (con aislamiento multiempresa estricto y anti-avalancha)
     if (pathname === '/api/fleet/live' && req.method === 'GET') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
 
-      // Si Traccar ya tiene credenciales, intentar sincronizar en vivo silenciosamente
+      // Si Traccar ya tiene credenciales, sincronizar con protección anti-avalancha (máx 1 vez cada 4s)
       if (db.traccarConfig.url && db.traccarConfig.email && db.traccarConfig.password) {
         try {
-          await syncWithTraccar(db);
+          await triggerTraccarSync(db, false);
         } catch (err) {
           // Continuar mostrando la última posición guardada si hay microcorte
         }
@@ -591,13 +794,7 @@ const server = http.createServer(async (req, res) => {
         vehicles = vehicles.filter((v) => v.companyId === filterCompanyId);
       }
 
-      const enriched = vehicles.map((v) => {
-        const comp = db.companies.find((c) => c.id === v.companyId);
-        return {
-          ...v,
-          companyName: comp ? comp.name : 'Sin empresa asignada'
-        };
-      });
+      const enriched = vehicles.map((v) => sanitizeVehicleForUser(v, user, db.companies));
 
       return sendJson(res, 200, {
         traccarConnected: db.traccarConfig.connected,
@@ -730,7 +927,7 @@ const server = http.createServer(async (req, res) => {
           id: `usr-${Date.now()}`,
           name: (adminName || `Admin ${name}`).trim(),
           email: adminEmail.trim().toLowerCase(),
-          password: adminPassword,
+          password: hashPassword(adminPassword),
           role: 'COMPANY_ADMIN',
           companyId: newCompany.id
         });
@@ -981,12 +1178,15 @@ const server = http.createServer(async (req, res) => {
       if (!lat || !lng) return sendJson(res, 400, { error: 'Faltan coordenadas' });
 
       let street = `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+      const geoController = new AbortController();
+      const geoTimeout = setTimeout(() => geoController.abort(), 5000);
       try {
         const nomRes = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
             lat
           )}&lon=${encodeURIComponent(lng)}&accept-language=es`,
           {
+            signal: geoController.signal,
             headers: { 'User-Agent': 'GEO-PANEL-Bolivia/1.0' }
           }
         );
@@ -998,7 +1198,9 @@ const server = http.createServer(async (req, res) => {
           }
         }
       } catch (err) {
-        // Fallback amigable
+        // Fallback amigable si Nominatim tarda más de 5s
+      } finally {
+        clearTimeout(geoTimeout);
       }
 
       if (vehicleId) {
@@ -1085,9 +1287,35 @@ process.on('unhandledRejection', (reason) => {
   console.error('Promesa rechazada controlada (unhandledRejection):', reason);
 });
 
+// Apagado elegante (Graceful Shutdown - The 12-Factor App Factor IX)
+let isShuttingDown = false;
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n🛑 Señal ${signal} recibida. Cerrando GEO-PANEL de forma segura...`);
+  try {
+    if (memoryDb) {
+      saveDb(memoryDb);
+      console.log('💾 Estado guardado atómicamente en disco.');
+    }
+  } catch (err) {
+    console.error('Error al guardar estado durante apagado:', err.message);
+  }
+  server.close(() => {
+    console.log('✅ Conexiones HTTP finalizadas limpiamente.');
+    process.exit(0);
+  });
+  // Si alguna conexión queda colgada más de 5 segundos, forzar salida limpia
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`====================================================`);
   console.log(`🚀 GEO-PANEL ejecutándose en http://localhost:${PORT} y en tu red Wi-Fi (0.0.0.0:${PORT})`);
   console.log(`📍 Servidor Traccar configurado: ${DEFAULT_DB.traccarConfig.url}`);
+  console.log(`🛡️ Blindaje SRE/OWASP activo (scrypt, Rate-Limit, Singleflight, Graceful Shutdown)`);
   console.log(`====================================================`);
 });
