@@ -1096,19 +1096,19 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'Coordenadas geográficas inválidas (latitud entre -90 y 90, longitud entre -180 y 180)' });
       }
 
-      // Telemetría: velocidad, rumbo, precisión, batería
-      const rawSpeed = Number(speedKmh);
+      // Telemetría: velocidad (admite speedKmh o speed), rumbo, precisión, batería
+      const rawSpeed = Number(payload.speedKmh !== undefined ? payload.speedKmh : payload.speed);
       const speed = Number.isFinite(rawSpeed) && rawSpeed >= 0 ? +rawSpeed.toFixed(2) : 0;
       // Clasificación de anomalía de velocidad (no rechazar automáticamente)
       const speedAnomaly = speed > 200 ? 'excessive_speed_or_gps_jump' : null;
 
-      const rawCourse = Number(course);
+      const rawCourse = Number(payload.course !== undefined ? payload.course : (payload.bearing !== undefined ? payload.bearing : payload.heading));
       const crs = Number.isFinite(rawCourse) && rawCourse >= 0 && rawCourse <= 360 ? +rawCourse.toFixed(1) : 0;
 
-      const rawAccuracy = Number(accuracy);
+      const rawAccuracy = Number(payload.accuracy);
       const acc = Number.isFinite(rawAccuracy) && rawAccuracy >= 0 ? +rawAccuracy.toFixed(1) : 5.0;
 
-      const rawBattery = Number(batteryLevel);
+      const rawBattery = Number(payload.batteryLevel !== undefined ? payload.batteryLevel : payload.battery);
       const bat = Number.isFinite(rawBattery) && rawBattery >= 0 && rawBattery <= 100
         ? Math.round(rawBattery)
         : (dev.lastPosition?.batteryLevel ?? null);
