@@ -41,8 +41,9 @@ class TrackingForegroundService : Service() {
         createNotificationChannel()
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GeoPanel::TrackingWakeLock")
-        wakeLock?.acquire(24 * 60 * 60 * 1000L)
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GeoPanel::TrackingWakeLock").apply {
+            setReferenceCounted(false)
+        }
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
@@ -99,42 +100,50 @@ class TrackingForegroundService : Service() {
 
     private fun onNewLocationCaptured(loc: Location) {
         serviceScope.launch {
-            val app = applicationContext as GeoPanelApplication
-            val uniqueId = app.prefs.getString(GeoPanelApplication.KEY_UNIQUE_ID, "") ?: ""
-            val token = app.prefs.getString(GeoPanelApplication.KEY_DEVICE_TOKEN, "") ?: ""
-            val serverUrl = app.prefs.getString(
-                GeoPanelApplication.KEY_SERVER_URL,
-                "https://tusrb5tle2w9helgfmthkpdf.187.127.33.214.sslip.io"
-            ) ?: ""
+            // WakeLock temporal de 15s para garantizar persistencia y transmisión sin drenar batería
+            wakeLock?.acquire(15000L)
+            try {
+                val app = applicationContext as GeoPanelApplication
+                val uniqueId = app.prefs.getString(GeoPanelApplication.KEY_UNIQUE_ID, "") ?: ""
+                val token = app.prefs.getString(GeoPanelApplication.KEY_DEVICE_TOKEN, "") ?: ""
+                val serverUrl = app.prefs.getString(
+                    GeoPanelApplication.KEY_SERVER_URL,
+                    "https://tusrb5tle2w9helgfmthkpdf.187.127.33.214.sslip.io"
+                ) ?: ""
 
-            if (uniqueId.isBlank() || token.isBlank()) return@launch
+                if (uniqueId.isBlank() || token.isBlank()) return@launch
 
-            val batteryLevel = getBatteryLevel()
-            val fixTimeIso = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Instant.ofEpochMilli(loc.time).toString()
-            } else {
-                "${loc.time}"
+                val batteryLevel = getBatteryLevel()
+                val fixTimeIso = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    Instant.ofEpochMilli(loc.time).toString()
+                } else {
+                    "${loc.time}"
+                }
+
+                val entity = PositionEntity(
+                    packetId = UUID.randomUUID().toString(),
+                    uniqueId = uniqueId,
+                    latitude = loc.latitude,
+                    longitude = loc.longitude,
+                    speedKmh = loc.speed * 3.6,
+                    course = loc.bearing.toDouble(),
+                    accuracy = loc.accuracy.toDouble(),
+                    batteryLevel = batteryLevel,
+                    fixTime = fixTimeIso,
+                    isSynced = false
+                )
+
+                // 1. Persistencia segura local inmediata en Room SQLite
+                val localId = repository.recordLocalPosition(entity)
+                val savedEntity = entity.copy(id = localId)
+
+                // 2. Transmisión segura por HTTPS
+                repository.transmitPosition(serverUrl, token, savedEntity)
+            } finally {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
             }
-
-            val entity = PositionEntity(
-                packetId = UUID.randomUUID().toString(),
-                uniqueId = uniqueId,
-                latitude = loc.latitude,
-                longitude = loc.longitude,
-                speedKmh = loc.speed * 3.6,
-                course = loc.bearing.toDouble(),
-                accuracy = loc.accuracy.toDouble(),
-                batteryLevel = batteryLevel,
-                fixTime = fixTimeIso,
-                isSynced = false
-            )
-
-            // 1. Persistencia segura local inmediata en Room SQLite
-            val localId = repository.recordLocalPosition(entity)
-            val savedEntity = entity.copy(id = localId)
-
-            // 2. Transmisión segura por HTTPS
-            repository.transmitPosition(serverUrl, token, savedEntity)
         }
     }
 

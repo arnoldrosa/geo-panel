@@ -173,7 +173,12 @@ private suspend fun performPairing(serverUrl: String, code: String): Result<Pair
             .readTimeout(10, TimeUnit.SECONDS)
             .build()
 
-        val endpoint = serverUrl.trimEnd('/') + "/api/v1/devices/pair"
+        val normalizedUrl = when {
+            serverUrl.startsWith("http://", ignoreCase = true) || serverUrl.startsWith("https://", ignoreCase = true) -> serverUrl.trimEnd('/')
+            else -> "https://" + serverUrl.trimEnd('/')
+        }
+
+        val endpoint = "$normalizedUrl/api/v1/devices/pair"
         val payload = JSONObject().apply {
             put("code", code)
             put("deviceModel", "${Build.MANUFACTURER} ${Build.MODEL}")
@@ -203,6 +208,14 @@ private suspend fun performPairing(serverUrl: String, code: String): Result<Pair
             }
         }
     } catch (e: Exception) {
-        Result.failure(Exception("Fallo de conexión: ${e.message}"))
+        val detailedMsg = when {
+            e is javax.net.ssl.SSLHandshakeException || e.cause is java.security.cert.CertPathValidatorException ->
+                "Fallo de seguridad SSL/TLS: El certificado del servidor es autofirmado o inválido (CertPathValidatorException). Se requiere HTTPS válido en Traefik/Coolify."
+            e is java.net.ConnectException ->
+                "No se pudo conectar al servidor: ${e.message}"
+            else ->
+                "Fallo de conexión: ${e.message}"
+        }
+        Result.failure(Exception(detailedMsg))
     }
 }
