@@ -60,9 +60,13 @@ class TelemetryRepository(private val dao: PositionDao) {
         try {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    // Confirmación real del servidor: eliminamos de la cola persistente
-                    dao.deletePosition(pos.id)
-                    return@withContext true
+                    val bodyString = response.body?.string().orEmpty()
+                    val json = try { JSONObject(bodyString) } catch (_: Exception) { null }
+                    // Exigir confirmación explícita ok == true del backend GEO-PANEL
+                    if (json != null && json.optBoolean("ok", false)) {
+                        dao.deletePosition(pos.id)
+                        return@withContext true
+                    }
                 }
             }
         } catch (_: Exception) {
