@@ -4,8 +4,11 @@
  * transacciones ACID, tiempos de espera y reconexión resiliente (SRE).
  */
 const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
 
 const isProduction = process.env.NODE_ENV === 'production';
+let schemaInitialized = false;
 
 // Configuración mediante variables de entorno con valores seguros
 const poolConfig = {
@@ -82,6 +85,31 @@ async function withTransaction(callback) {
 }
 
 /**
+ * Inicializa e idempotentemente asegura el esquema PostgreSQL desde scripts/schema.sql
+ */
+async function ensureSchema() {
+  if (schemaInitialized) return true;
+  const candidatePaths = [
+    path.join(__dirname, '../scripts/schema.sql'),
+    path.join(process.cwd(), 'scripts/schema.sql'),
+    '/app/scripts/schema.sql'
+  ];
+  const schemaPath = candidatePaths.find((p) => fs.existsSync(p));
+  if (!schemaPath) return false;
+
+  try {
+    const sql = fs.readFileSync(schemaPath, 'utf8');
+    await query(sql);
+    schemaInitialized = true;
+    console.log('✅ Esquema PostgreSQL verificado e inicializado correctamente.');
+    return true;
+  } catch (err) {
+    console.error('Aviso inicializando esquema en PostgreSQL:', err.message);
+    return false;
+  }
+}
+
+/**
  * Verifica la disponibilidad activa de la base de datos (Healthcheck)
  */
 async function checkHealth() {
@@ -90,6 +118,11 @@ async function checkHealth() {
     const res = await query('SELECT 1 as alive, version() as version');
     const latencyMs = Date.now() - start;
     isConnected = true;
+
+    if (!schemaInitialized) {
+      await ensureSchema().catch(() => {});
+    }
+
     return {
       available: true,
       latencyMs,
@@ -124,6 +157,7 @@ module.exports = {
   query,
   withTransaction,
   checkHealth,
+  ensureSchema,
   closePool,
   isConnected: () => isConnected,
   get connected() { return isConnected; }

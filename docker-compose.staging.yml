@@ -11,7 +11,6 @@ services:
       POSTGRES_PASSWORD: ${PGPASSWORD}
     volumes:
       - geopanel_staging_pgdata:/var/lib/postgresql/data
-      - ./scripts/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - geopanel_staging_net
     deploy:
@@ -57,6 +56,7 @@ services:
       - geopanel_staging_data:/app/data
     networks:
       - geopanel_staging_net
+      - coolify
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.geopanel-staging.rule=Host(`staging-geo.187.127.33.214.sslip.io`)"
@@ -80,3 +80,5 @@ networks:
   geopanel_staging_net:
     name: geopanel_staging_net
     driver: bridge
+  coolify:
+    external: true
