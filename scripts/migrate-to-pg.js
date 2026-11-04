@@ -71,9 +71,10 @@ ON CONFLICT (email) DO UPDATE SET
         : `(SELECT id FROM companies LIMIT 1)`;
 
       const tokenHash = v.deviceTokenHash ? `'${v.deviceTokenHash}'` : hashToken(v.deviceToken || `tok-${v.uniqueId.toLowerCase()}`);
+      const traccarId = (v.traccarDeviceId && Number.isInteger(Number(v.traccarDeviceId))) ? Number(v.traccarDeviceId) : 'NULL';
 
       sql += `INSERT INTO devices (company_id, unique_id, name, plate, driver_name, device_type, phone, traccar_device_id, device_token_hash, is_disabled, is_demo, expiration_time, created_at)
-VALUES (${companyLookup}, ${escapeSql(v.uniqueId)}, ${escapeSql(v.name)}, ${escapeSql(v.plate)}, ${escapeSql(v.driver)}, ${escapeSql(v.type || 'person')}, ${escapeSql(v.phone)}, ${v.traccarDeviceId || 'NULL'}, ${tokenHash}, ${!!v.disabled}, ${!!v.isDemo}, ${escapeSql(v.expirationTime)}, CURRENT_TIMESTAMP)
+VALUES (${companyLookup}, ${escapeSql(v.uniqueId)}, ${escapeSql(v.name)}, ${escapeSql(v.plate)}, ${escapeSql(v.driver)}, ${escapeSql(v.type || 'person')}, ${escapeSql(v.phone)}, ${traccarId}, ${tokenHash}, ${!!v.disabled}, ${!!v.isDemo}, ${escapeSql(v.expirationTime)}, CURRENT_TIMESTAMP)
 ON CONFLICT (unique_id) DO UPDATE SET 
   name = EXCLUDED.name,
   plate = EXCLUDED.plate,

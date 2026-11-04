@@ -1699,6 +1699,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       saveDb(db);
+      if (telemetryRepository) {
+        try { await telemetryRepository.syncCompany(newCompany); } catch (_) {}
+      }
       return sendJson(res, 201, { company: newCompany });
     }
 
@@ -1796,6 +1799,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       saveDb(db);
+      if (telemetryRepository) {
+        try { await telemetryRepository.syncDevice(localVeh); } catch (_) {}
+      }
       return sendJson(res, 201, {
         message: `Dispositivo "${name}" registrado correctamente.`,
         vehicle: localVeh
@@ -1861,6 +1867,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       saveDb(db);
+      if (telemetryRepository) {
+        telemetryRepository.syncDevice(veh).catch(() => {});
+      }
       return sendJson(res, 200, { vehicle: veh });
     }
 
@@ -1892,6 +1901,137 @@ const server = http.createServer(async (req, res) => {
       db.vehicles.splice(vehIndex, 1);
       saveDb(db);
       return sendJson(res, 200, { ok: true });
+    }
+
+    // ====================================================================
+    // VINCULACIÓN SEGURA MEDIANTE QR / OTP Y REVOCACIÓN DE TOKEN (OT-006)
+    // ====================================================================
+
+    // 10.1 GENERAR CÓDIGO QR / OTP TEMPORAL DE VINCULACIÓN (Solo ADMIN / SUPERADMIN)
+    if ((pathname.endsWith('/pairing-code') && req.method === 'POST') &&
+        (pathname.startsWith('/api/vehicles/') || pathname.startsWith('/api/v1/devices/'))) {
+      const user = getAuthUser(req, db);
+      if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+
+      const parts = pathname.split('/').filter(Boolean);
+      const devId = parts[parts.length - 2];
+      const dev = db.vehicles.find((v) => v.id === devId || v.uniqueId === devId);
+      if (!dev) return sendJson(res, 404, { error: 'Dispositivo no encontrado' });
+
+      if (user.role !== ROLES.SUPERADMIN && dev.companyId !== user.companyId) {
+        return sendJson(res, 403, { error: 'Sin permiso para gestionar este dispositivo' });
+      }
+
+      const pairingCode = `GP-${Math.floor(100000 + Math.random() * 900000)}`;
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+      dev.pairingCode = pairingCode;
+      dev.pairingExpiresAt = expiresAt;
+      saveDb(db);
+
+      const host = req.headers.host || 'localhost:3000';
+      const proto = req.headers['x-forwarded-proto'] || 'http';
+      const serverUrl = `${proto}://${host}`;
+
+      const qrPayload = JSON.stringify({
+        type: 'geopanel_pair',
+        v: 1,
+        serverUrl,
+        code: pairingCode,
+        uniqueId: dev.uniqueId
+      });
+
+      return sendJson(res, 200, {
+        ok: true,
+        code: pairingCode,
+        expiresAt,
+        expiresInSeconds: 600,
+        serverUrl,
+        qrPayload
+      });
+    }
+
+    // 10.2 VINCULACIÓN MÓVIL MEDIANTE CÓDIGO OTP (Público desde app Android)
+    if ((pathname === '/api/v1/devices/pair' || pathname === '/api/devices/pair') && req.method === 'POST') {
+      const body = await parseBody(req);
+      const { code, deviceModel, appVersion } = body;
+
+      if (!code || typeof code !== 'string') {
+        return sendJson(res, 400, { error: 'El código de vinculación es requerido' });
+      }
+
+      const cleanCode = code.trim().toUpperCase();
+      const dev = db.vehicles.find((v) => v.pairingCode && v.pairingCode.toUpperCase() === cleanCode);
+
+      if (!dev) {
+        return sendJson(res, 404, { error: 'Código de vinculación inválido o no encontrado' });
+      }
+
+      if (new Date(dev.pairingExpiresAt).getTime() < Date.now()) {
+        dev.pairingCode = null;
+        dev.pairingExpiresAt = null;
+        saveDb(db);
+        return sendJson(res, 400, { error: 'El código de vinculación ha expirado. Solicita uno nuevo en el panel de administración.' });
+      }
+
+      const rawToken = 'tok-' + crypto.randomBytes(20).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+      dev.deviceToken = rawToken;
+      dev.deviceTokenHash = tokenHash;
+      dev.pairingCode = null;
+      dev.pairingExpiresAt = null;
+      dev.pairedAt = new Date().toISOString();
+      dev.pairedModel = deviceModel || 'Android Device';
+      dev.appVersion = appVersion || '1.0.0';
+
+      saveDb(db);
+
+      if (telemetryRepository) {
+        try { await telemetryRepository.updateDeviceTokenHash(dev.uniqueId, tokenHash); } catch (_) {}
+      }
+
+      const company = db.companies.find((c) => c.id === dev.companyId);
+      const host = req.headers.host || 'localhost:3000';
+      const proto = req.headers['x-forwarded-proto'] || 'http';
+
+      return sendJson(res, 200, {
+        ok: true,
+        uniqueId: dev.uniqueId,
+        deviceToken: rawToken,
+        companyName: company ? company.name : 'GEO-PANEL Flota',
+        serverUrl: `${proto}://${host}`
+      });
+    }
+
+    // 10.3 REVOCAR CREDENCIAL DE DISPOSITIVO (Solo ADMIN / SUPERADMIN)
+    if ((pathname.endsWith('/revoke-token') && req.method === 'POST') &&
+        (pathname.startsWith('/api/vehicles/') || pathname.startsWith('/api/v1/devices/'))) {
+      const user = getAuthUser(req, db);
+      if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+
+      const parts = pathname.split('/').filter(Boolean);
+      const devId = parts[parts.length - 2];
+      const dev = db.vehicles.find((v) => v.id === devId || v.uniqueId === devId);
+      if (!dev) return sendJson(res, 404, { error: 'Dispositivo no encontrado' });
+
+      if (user.role !== ROLES.SUPERADMIN && dev.companyId !== user.companyId) {
+        return sendJson(res, 403, { error: 'Sin permiso para revocar este dispositivo' });
+      }
+
+      dev.deviceToken = null;
+      dev.deviceTokenHash = null;
+      dev.revokedAt = new Date().toISOString();
+      saveDb(db);
+
+      if (telemetryRepository) {
+        try { await telemetryRepository.updateDeviceTokenHash(dev.uniqueId, null); } catch (_) {}
+      }
+
+      return sendJson(res, 200, {
+        ok: true,
+        message: `Credencial del dispositivo "${dev.name}" revocada exitosamente. Ya no podrá transmitir coordenadas.`
+      });
     }
 
     // 11. GEOCODIFICACIÓN INVERSA

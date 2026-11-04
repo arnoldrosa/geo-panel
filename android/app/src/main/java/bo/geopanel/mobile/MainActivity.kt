@@ -10,15 +10,16 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
+import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import bo.geopanel.mobile.ui.GeoPanelAdaptiveApp
+import bo.geopanel.mobile.ui.screens.PairingScreen
 
 class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Habilitar diseño Edge-to-Edge para respetar Insets y áreas seguras del sistema
         enableEdgeToEdge()
 
         setContent {
@@ -45,8 +46,17 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
+            val app = applicationContext as GeoPanelApplication
+            var isPaired by remember {
+                mutableStateOf(!app.prefs.getString(GeoPanelApplication.KEY_DEVICE_TOKEN, "").isNullOrBlank())
+            }
+
             MaterialTheme(colorScheme = colorScheme) {
-                GeoPanelAdaptiveApp(windowSizeClass = windowSizeClass)
+                if (!isPaired) {
+                    PairingScreen(onPairingSuccess = { isPaired = true })
+                } else {
+                    GeoPanelAdaptiveApp(windowSizeClass = windowSizeClass)
+                }
             }
         }
     }

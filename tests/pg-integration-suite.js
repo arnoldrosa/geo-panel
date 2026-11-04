@@ -88,7 +88,7 @@ async function runPgIntegrationSuite() {
 
     // 4. Inserción de posición telemática con PostGIS Point
     let testDeviceId = '';
-    const nowIso = new Date().toISOString();
+    const nowIso = new Date(Date.now() + 60000).toISOString();
 
     await test('4. Inserción de telemetría GPS con geometría PostGIS Point(lon, lat)', async () => {
       const res = await telemetryRepo.recordTelemetry({

@@ -729,35 +729,55 @@ function closeDeviceModal() {
 function openQrModalForSelected() {
   if (!selectedVehicleId) return;
   openDeviceModal(selectedVehicleId);
-  toggleQrPreviewInModal(true);
+  generateDevicePairingOtp();
 }
 
-function toggleQrPreviewInModal(forceShow = null) {
-  const qrBox = document.getElementById('dm-qr-box');
-  const shouldShow = forceShow !== null ? forceShow : qrBox.classList.contains('hidden');
-  qrBox.classList.toggle('hidden', !shouldShow);
-  if (shouldShow) {
-    renderQrCodeInModal();
+async function generateDevicePairingOtp() {
+  const vehId = document.getElementById('dm-id').value;
+  if (!vehId) {
+    showToast('Guarda primero el dispositivo antes de generar el código de vinculación', 'warning');
+    return;
+  }
+  try {
+    const res = await apiFetch(`/api/vehicles/${vehId}/pairing-code`, { method: 'POST' });
+    const qrBox = document.getElementById('dm-qr-box');
+    const codeEl = document.getElementById('dm-qr-code-text');
+    const canvas = document.getElementById('dm-qr-canvas');
+    qrBox.classList.remove('hidden');
+    codeEl.textContent = res.code;
+    canvas.innerHTML = '';
+    if (typeof QRCode !== 'undefined') {
+      new QRCode(canvas, {
+        text: res.qrPayload,
+        width: 140,
+        height: 140,
+        colorDark: '#0f172a',
+        colorLight: '#ffffff'
+      });
+    }
+    const revokeBtn = document.getElementById('dm-revoke-btn');
+    if (revokeBtn) revokeBtn.classList.remove('hidden');
+    showToast(`Código ${res.code} generado (válido por 10 minutos)`, 'info');
+  } catch (err) {
+    showToast('Error generando código de vinculación: ' + err.message, 'error');
   }
 }
 
-function renderQrCodeInModal() {
-  const uniqueId = document.getElementById('dm-uniqueid').value.trim() || 'SIN-ID';
-  document.getElementById('dm-qr-id-text').textContent = uniqueId;
-  const qrContainer = document.getElementById('dm-qr-canvas');
-  qrContainer.innerHTML = '';
-
-  const qrContent = `http://187.127.33.214:5055/?id=${encodeURIComponent(uniqueId)}`;
-  if (typeof QRCode !== 'undefined') {
-    new QRCode(qrContainer, {
-      text: qrContent,
-      width: 140,
-      height: 140,
-      colorDark: '#0f172a',
-      colorLight: '#ffffff'
-    });
-  } else {
-    qrContainer.innerHTML = `<div class="p-3 text-xs text-slate-900 font-bold">${escapeHtml(qrContent)}</div>`;
+async function revokeCurrentDeviceToken() {
+  const vehId = document.getElementById('dm-id').value;
+  if (!vehId) return;
+  if (!confirm('¿Estás seguro de revocar la credencial móvil de este dispositivo? La app Android dejará de transmitir de inmediato.')) {
+    return;
+  }
+  try {
+    const res = await apiFetch(`/api/vehicles/${vehId}/revoke-token`, { method: 'POST' });
+    showToast(res.message, 'success');
+    document.getElementById('dm-qr-box').classList.add('hidden');
+    const revokeBtn = document.getElementById('dm-revoke-btn');
+    if (revokeBtn) revokeBtn.classList.add('hidden');
+    await loadLiveFleet(false);
+  } catch (err) {
+    showToast('Error revocando credencial: ' + err.message, 'error');
   }
 }
 

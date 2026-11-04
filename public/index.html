@@ -1077,23 +1077,26 @@
             </label>
           </div>
 
-          <!-- Botón CÓDIGO QR de Vinculación -->
-          <div class="pt-2">
-            <button type="button" onclick="toggleQrPreviewInModal()"
-              class="w-full py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold tracking-wider uppercase text-sky-300 transition">
-              📲 Generar Código QR de Vinculación
+          <!-- Botón CÓDIGO QR de Vinculación Temporal (OTP - OT-006) -->
+          <div class="pt-2 flex gap-2">
+            <button type="button" onclick="generateDevicePairingOtp()"
+              class="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold tracking-wider uppercase text-sky-300 transition flex items-center justify-center gap-1.5">
+              <span>📲</span> <span>Vincular por QR / OTP (10m)</span>
+            </button>
+            <button type="button" onclick="revokeCurrentDeviceToken()" id="dm-revoke-btn"
+              class="hidden py-2 px-3 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-xs font-bold text-rose-300 transition">
+              🚫 Revocar Token
             </button>
           </div>
 
-          <!-- Contenedor QR -->
-          <div id="dm-qr-box" class="hidden bg-slate-900 border border-slate-700 rounded-xl p-4 text-center space-y-2">
+          <!-- Contenedor QR OTP -->
+          <div id="dm-qr-box" class="hidden bg-slate-900 border border-slate-700 rounded-xl p-4 text-center space-y-3">
             <div id="dm-qr-canvas" class="inline-block bg-white p-3 rounded-xl mx-auto"></div>
-            <div class="text-xs font-bold text-emerald-400">Datos para Traccar Client o GEO-PANEL Mobile:</div>
-            <div class="text-xs text-slate-300">
-              URL Ingesta: <code id="dm-qr-url-text" class="text-emerald-300 font-bold select-all">http://187.127.33.214:5055</code>
-            </div>
-            <div class="text-xs text-slate-300">
-              Identificador: <code id="dm-qr-id-text" class="text-sky-300 font-bold select-all">--</code>
+            <div class="space-y-1">
+              <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Código de Vinculación de un solo uso:</div>
+              <div id="dm-qr-code-text" class="text-2xl font-black font-mono text-amber-400 tracking-widest select-all">GP-XXXXXX</div>
+              <div class="text-[11px] text-slate-400">Válido por 10 minutos. Escanéalo o ingrésalo en la app Android.</div>
+              <div class="text-[10px] text-emerald-400/90 font-medium">🔒 No incluye tokens permanentes ni credenciales administrativas.</div>
             </div>
           </div>
         </div>

@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">GEO-PANEL Mobile</string>
+    <string name="tracking_active">Rastreo GPS Activo</string>
+    <string name="tracking_paused">Rastreador en Pausa</string>
+    <string name="notification_channel_name">Servicio de Rastreo GPS</string>
+    <string name="notification_channel_desc">Mantiene la telemetría vehicular en segundo plano</string>
+</resources>

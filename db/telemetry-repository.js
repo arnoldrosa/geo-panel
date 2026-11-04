@@ -241,6 +241,68 @@ class TelemetryRepository {
     const res = await query(sql, params);
     return res.rows;
   }
+  /**
+   * Sincroniza una empresa en PostgreSQL para aislamiento multi-tenant
+   */
+  async syncCompany(comp) {
+    try {
+      await query(
+        `INSERT INTO companies (legacy_id, name, tax_id, phone, city, plan, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (legacy_id) DO UPDATE SET 
+           name = EXCLUDED.name, 
+           tax_id = EXCLUDED.tax_id, 
+           phone = EXCLUDED.phone, 
+           plan = EXCLUDED.plan, 
+           status = EXCLUDED.status,
+           updated_at = CURRENT_TIMESTAMP`,
+        [comp.id, comp.name, comp.nit || null, comp.phone || null, comp.city || 'Santa Cruz de la Sierra', comp.plan || 'Plan PyME', comp.status || 'active', comp.createdAt || new Date().toISOString()]
+      );
+    } catch (err) {
+      console.warn('Aviso sincronizando empresa en PostgreSQL:', err.message);
+    }
+  }
+
+  /**
+   * Sincroniza un dispositivo / vehículo en PostgreSQL
+   */
+  async syncDevice(v) {
+    try {
+      const crypto = require('crypto');
+      const tokenHash = v.deviceTokenHash || (v.deviceToken ? crypto.createHash('sha256').update(String(v.deviceToken).trim()).digest('hex') : null);
+      await query(
+        `INSERT INTO devices (company_id, unique_id, name, plate, driver_name, device_type, phone, traccar_device_id, device_token_hash, is_disabled, is_demo, expiration_time, created_at)
+         VALUES (
+           COALESCE((SELECT id FROM companies WHERE legacy_id = $1), (SELECT id FROM companies LIMIT 1)),
+           $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP
+         )
+         ON CONFLICT (unique_id) DO UPDATE SET 
+           name = EXCLUDED.name,
+           plate = EXCLUDED.plate,
+           driver_name = EXCLUDED.driver_name,
+           device_token_hash = COALESCE(EXCLUDED.device_token_hash, devices.device_token_hash),
+           is_disabled = EXCLUDED.is_disabled,
+           updated_at = CURRENT_TIMESTAMP`,
+        [v.companyId, v.uniqueId, v.name, v.plate || null, v.driver || null, v.type || 'person', v.phone || null, (v.traccarDeviceId && Number.isInteger(Number(v.traccarDeviceId))) ? Number(v.traccarDeviceId) : null, tokenHash, !!v.disabled, !!v.isDemo, v.expirationTime ? new Date(v.expirationTime).toISOString() : null]
+      );
+    } catch (err) {
+      console.warn('Aviso sincronizando dispositivo en PostgreSQL:', err.message);
+    }
+  }
+
+  /**
+   * Actualiza el hash del token de dispositivo tras vinculación o revocación
+   */
+  async updateDeviceTokenHash(uniqueId, tokenHash) {
+    try {
+      await query(
+        `UPDATE devices SET device_token_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE unique_id = $2`,
+        [tokenHash, uniqueId]
+      );
+    } catch (err) {
+      console.warn('Aviso actualizando token hash en PostgreSQL:', err.message);
+    }
+  }
 }
 
 module.exports = new TelemetryRepository();

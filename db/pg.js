@@ -50,6 +50,7 @@ async function query(text, params = []) {
   const client = getPool();
   try {
     const res = await client.query(text, params);
+    isConnected = true;
     const duration = Date.now() - start;
     if (process.env.DEBUG_SQL === 'true') {
       console.log(`[SQL ${duration}ms] ${text.replace(/\s+/g, ' ').slice(0, 100)} (filas: ${res.rowCount})`);
@@ -124,5 +125,9 @@ module.exports = {
   withTransaction,
   checkHealth,
   closePool,
-  get isConnected() { return isConnected; }
+  isConnected: () => isConnected,
+  get connected() { return isConnected; }
 };
+
+// Auto-sondear salud de PostgreSQL en inicialización silenciosamente
+checkHealth().catch(() => {});

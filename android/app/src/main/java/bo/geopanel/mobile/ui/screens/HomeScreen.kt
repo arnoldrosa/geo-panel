@@ -1,5 +1,7 @@
 package bo.geopanel.mobile.ui.screens
 
+import android.content.Intent
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -12,19 +14,26 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import bo.geopanel.mobile.GeoPanelApplication
+import bo.geopanel.mobile.service.TrackingForegroundService
 
 @Composable
 fun HomeScreen(isCompact: Boolean) {
-    var isTracking by remember { mutableStateOf(false) }
-    var speed by remember { mutableFloatStateOf(0.0f) }
-    var batteryLevel by remember { mutableIntStateOf(92) }
-    var accuracy by remember { mutableFloatStateOf(3.5f) }
-    var packetsSent by remember { mutableIntStateOf(142) }
-    var packetsPending by remember { mutableIntStateOf(0) }
-    var hasUpdate by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val app = context.applicationContext as GeoPanelApplication
+
+    var isTracking by remember {
+        mutableStateOf(app.prefs.getBoolean(GeoPanelApplication.KEY_IS_TRACKING, false))
+    }
+    val uniqueId = remember {
+        app.prefs.getString(GeoPanelApplication.KEY_UNIQUE_ID, "No configurado") ?: "No configurado"
+    }
+
+    val pendingCount by app.database.positionDao().getPendingCountFlow().collectAsState(initial = 0)
 
     val scrollState = rememberScrollState()
 
@@ -49,124 +58,93 @@ fun HomeScreen(isCompact: Boolean) {
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = if (isTracking) "🟢 Transmitiendo coordenadas" else "⚪ Rastreador en pausa",
+                    text = if (isTracking) "🟢 Transmitiendo coordenadas ($uniqueId)" else "⚪ Rastreador en pausa ($uniqueId)",
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (isTracking) MaterialTheme.colorScheme.primary else Color.Gray
                 )
             }
-
-            // Indicador de batería y precisión
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .background(
-                        MaterialTheme.colorScheme.surfaceVariant,
-                        RoundedCornerShape(12.dp)
-                    )
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Favorite,
-                    contentDescription = "Batería",
-                    tint = if (batteryLevel > 20) Color(0xFF10B981) else Color(0xFFEF4444),
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = "$batteryLevel%",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
         }
 
-        // Banner informativo de actualización voluntaria (Requisito 3)
-        if (hasUpdate) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "🚀 Nueva versión disponible (v1.1.0)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Mejoras de rendimiento y optimización de batería en segundo plano.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    Button(
-                        onClick = { /* Descargar actualización voluntaria */ },
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Actualizar")
-                    }
-                }
-            }
-        }
-
-        // Panel de velocímetro y estado principal
+        // Velocímetro digital con tarjeta de estado
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "${speed.toInt()}",
-                    fontSize = if (isCompact) 64.sp else 80.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "KM / HORA",
-                    style = MaterialTheme.typography.labelLarge,
+                    text = "VELOCIDAD GPS",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = if (isTracking) "0.0" else "--",
+                        fontSize = if (isCompact) 48.sp else 64.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "km/h",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceAround
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = "Precisión GPS", style = MaterialTheme.typography.bodySmall)
-                        Text(text = "±${accuracy}m", fontWeight = FontWeight.Bold)
+                        Text(text = "Modo GPS", style = MaterialTheme.typography.bodySmall)
+                        Text(text = "Alta Fidelidad", fontWeight = FontWeight.Bold)
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = "Paquetes Enviados", style = MaterialTheme.typography.bodySmall)
-                        Text(text = "$packetsSent", fontWeight = FontWeight.Bold)
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = "Cola Offline", style = MaterialTheme.typography.bodySmall)
+                        Text(text = "Cola Offline Room", style = MaterialTheme.typography.bodySmall)
                         Text(
-                            text = "$packetsPending",
+                            text = "$pendingCount pendientes",
                             fontWeight = FontWeight.Bold,
-                            color = if (packetsPending > 0) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurface
+                            color = if (pendingCount > 0) Color(0xFFF59E0B) else MaterialTheme.colorScheme.primary
                         )
                     }
                 }
             }
         }
 
-        // Botón principal de Inicio / Detención de Transmisión (Mínimo 48dp táctil accesible)
+        // Botón principal de Inicio / Detención de Transmisión (Mínimo 56dp táctil accesible)
         Button(
-            onClick = { isTracking = !isTracking },
+            onClick = {
+                if (isTracking) {
+                    val stopIntent = Intent(context, TrackingForegroundService::class.java).apply {
+                        action = TrackingForegroundService.ACTION_STOP
+                    }
+                    context.startService(stopIntent)
+                    isTracking = false
+                } else {
+                    val startIntent = Intent(context, TrackingForegroundService::class.java).apply {
+                        action = TrackingForegroundService.ACTION_START
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(startIntent)
+                    } else {
+                        context.startService(startIntent)
+                    }
+                    isTracking = true
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),

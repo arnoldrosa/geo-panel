@@ -4,25 +4,38 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import bo.geopanel.mobile.GeoPanelApplication
 
 @Composable
 fun SettingsScreen(isCompact: Boolean) {
-    var serverUrl by remember { mutableStateOf("https://tusrb5tle2w9helgfmthkpdf.187.127.33.214.sslip.io") }
-    var deviceToken by remember { mutableStateOf("tok-demo-scz-01") }
-    var uniqueId by remember { mutableStateOf("DEMO-SCZ-01") }
-    var intervalSec by remember { mutableFloatStateOf(10f) }
-    var distanceMeters by remember { mutableFloatStateOf(25f) }
-    var isCheckingUpdates by remember { mutableStateOf(false) }
-    var updateStatusText by remember { mutableStateOf("Versión instalada: v1.0.0 (Build 1)") }
+    val context = LocalContext.current
+    val app = context.applicationContext as GeoPanelApplication
 
+    var serverUrl by remember {
+        mutableStateOf(app.prefs.getString(GeoPanelApplication.KEY_SERVER_URL, "") ?: "")
+    }
+    var uniqueId by remember {
+        mutableStateOf(app.prefs.getString(GeoPanelApplication.KEY_UNIQUE_ID, "") ?: "")
+    }
+    val deviceToken = remember {
+        app.prefs.getString(GeoPanelApplication.KEY_DEVICE_TOKEN, "") ?: ""
+    }
+    val companyName = remember {
+        app.prefs.getString(GeoPanelApplication.KEY_COMPANY_NAME, "GEO-PANEL Flota") ?: "GEO-PANEL Flota"
+    }
+
+    var intervalSec by remember {
+        mutableFloatStateOf(app.prefs.getInt(GeoPanelApplication.KEY_INTERVAL_SEC, 10).toFloat())
+    }
+
+    var saveToast by remember { mutableStateOf<String?>(null) }
     val scrollState = rememberScrollState()
 
     Column(
@@ -38,31 +51,38 @@ fun SettingsScreen(isCompact: Boolean) {
             fontWeight = FontWeight.Bold
         )
 
-        // Tarjeta de vinculación con GEO-PANEL
+        // Tarjeta de vinculación activa con GEO-PANEL
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "🔑 Credenciales de Transmisión",
+                    text = "🔑 Credencial de Vinculación Activa",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    text = "Empresa asignada: $companyName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
                 )
 
                 OutlinedTextField(
                     value = uniqueId,
                     onValueChange = { uniqueId = it },
-                    label = { Text("Identificador Único (IMEI / Placa / ID)") },
+                    label = { Text("Identificador de Vehículo / Conductor") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
 
                 OutlinedTextField(
-                    value = deviceToken,
-                    onValueChange = { deviceToken = it },
-                    label = { Text("Token Secreto del Dispositivo (X-Device-Token)") },
+                    value = if (deviceToken.length > 8) "${deviceToken.take(8)}..." else deviceToken,
+                    onValueChange = {},
+                    label = { Text("Token Criptográfico Revocable (X-Device-Token)") },
+                    enabled = false,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
@@ -77,66 +97,66 @@ fun SettingsScreen(isCompact: Boolean) {
             }
         }
 
-        // Frecuencia y sensores
+        // Frecuencia y calibración de sensores
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "⏱️ Frecuencia de Rastreo",
+                    text = "⏱️ Frecuencia de Telemetría",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
 
-                Text(text = "Intervalo de tiempo: ${intervalSec.toInt()} segundos")
+                Text(
+                    text = "Intervalo de reporte GPS: ${intervalSec.toInt()} segundos",
+                    style = MaterialTheme.typography.bodyMedium
+                )
                 Slider(
                     value = intervalSec,
                     onValueChange = { intervalSec = it },
                     valueRange = 5f..60f,
                     steps = 10
                 )
-
-                Text(text = "Filtro de desplazamiento: ${distanceMeters.toInt()} metros")
-                Slider(
-                    value = distanceMeters,
-                    onValueChange = { distanceMeters = it },
-                    valueRange = 5f..100f,
-                    steps = 18
+                Text(
+                    text = "Valores más cortos mejoran la precisión en curvas; valores mayores optimizan la batería.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // Comprobación de actualizaciones (Requisito 3)
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        saveToast?.let {
+            Text(text = it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Button(
+            onClick = {
+                app.prefs.edit()
+                    .putString(GeoPanelApplication.KEY_SERVER_URL, serverUrl.trim())
+                    .putString(GeoPanelApplication.KEY_UNIQUE_ID, uniqueId.trim())
+                    .putInt(GeoPanelApplication.KEY_INTERVAL_SEC, intervalSec.toInt())
+                    .apply()
+                saveToast = "✅ Ajustes guardados correctamente"
+            },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(12.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = "📦 Actualizaciones del Sistema",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+            Text("Guardar Cambios", fontWeight = FontWeight.Bold)
+        }
 
-                Text(text = updateStatusText, style = MaterialTheme.typography.bodySmall)
-
-                OutlinedButton(
-                    onClick = {
-                        isCheckingUpdates = true
-                        updateStatusText = "Consultando servidor GEO-PANEL..."
-                        // Consulta a /api/v1/mobile/updates/check
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Buscar Actualizaciones")
-                }
-            }
+        OutlinedButton(
+            onClick = {
+                app.prefs.edit().remove(GeoPanelApplication.KEY_DEVICE_TOKEN).apply()
+                saveToast = "Credencial eliminada. Reinicia para volver a vincular."
+            },
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Desvincular Dispositivo de este Celular", fontWeight = FontWeight.SemiBold)
         }
     }
 }
