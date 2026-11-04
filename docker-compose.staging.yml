@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  geopanel-postgres-staging:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: geopanel-postgres-staging
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: geopanel_staging
+      POSTGRES_USER: geopanel_staging_user
+      POSTGRES_PASSWORD: ${PGPASSWORD}
+    volumes:
+      - geopanel_staging_pgdata:/var/lib/postgresql/data
+      - ./scripts/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - geopanel_staging_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geopanel_staging_user -d geopanel_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  geo-panel-staging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: geo-panel-staging:develop
+    container_name: geo-panel-staging
+    restart: unless-stopped
+    depends_on:
+      geopanel-postgres-staging:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - APP_ENV=staging
+      - PORT=3000
+      - DATA_DIR=/app/data
+      - DB_FILE=/app/data/db_staging.json
+      - TELEMETRY_PROVIDER=native
+      - ALLOW_EXPERIMENTAL_NATIVE_ENGINE=true
+      - TRACCAR_ENABLED=false
+      - STRICT_PG_TELEMETRY=true
+      - PGHOST=geopanel-postgres-staging
+      - PGPORT=5432
+      - PGDATABASE=geopanel_staging
+      - PGUSER=geopanel_staging_user
+      - PGPASSWORD=${PGPASSWORD}
+      - TOKEN_SECRET=${TOKEN_SECRET}
+      - INITIAL_ADMIN_EMAIL=admin-staging@geopanel.bo
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
+    volumes:
+      - geopanel_staging_data:/app/data
+    networks:
+      - geopanel_staging_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.geopanel-staging.rule=Host(`staging-geo.187.127.33.214.sslip.io`)"
+      - "traefik.http.routers.geopanel-staging.entrypoints=websecure"
+      - "traefik.http.routers.geopanel-staging.tls=true"
+      - "traefik.http.routers.geopanel-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.services.geopanel-staging.loadbalancer.server.port=3000"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+volumes:
+  geopanel_staging_pgdata:
+    name: geopanel_staging_pgdata
+  geopanel_staging_data:
+    name: geopanel_staging_data
+
+networks:
+  geopanel_staging_net:
+    name: geopanel_staging_net
+    driver: bridge
