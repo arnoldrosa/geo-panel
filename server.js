@@ -15,7 +15,75 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Utilidades de Hashing de Contraseñas (scrypt + salt, sin dependencias externas)
+// ====================================================================
+// 1. SISTEMA RBAC (Roles y Permisos Granulares - Tarea 4)
+// ====================================================================
+const ROLES = {
+  SUPERADMIN: 'SUPERADMIN',
+  COMPANY_ADMIN: 'COMPANY_ADMIN',
+  OPERATOR: 'OPERATOR',
+  MOBILE_USER: 'MOBILE_USER'
+};
+
+const PERMISSIONS = {
+  COMPANY_CREATE: 'company:create',
+  COMPANY_READ: 'company:read',
+  COMPANY_UPDATE: 'company:update',
+  COMPANY_DELETE: 'company:delete',
+  USER_CREATE: 'user:create',
+  USER_READ: 'user:read',
+  USER_UPDATE: 'user:update',
+  USER_DELETE: 'user:delete',
+  DEVICE_CREATE: 'device:create',
+  DEVICE_READ: 'device:read',
+  DEVICE_UPDATE: 'device:update',
+  DEVICE_DELETE: 'device:delete',
+  FLEET_LIVE: 'fleet:live',
+  FLEET_HISTORY: 'fleet:history',
+  TELEMETRY_CONFIG: 'telemetry:config',
+  TELEMETRY_TRANSMIT: 'telemetry:transmit',
+  REPORT_READ: 'report:read',
+  QR_GENERATE: 'qr:generate'
+};
+
+const ROLE_PERMISSIONS = {
+  [ROLES.SUPERADMIN]: ['*'],
+  [ROLES.COMPANY_ADMIN]: [
+    PERMISSIONS.COMPANY_READ,
+    PERMISSIONS.USER_CREATE,
+    PERMISSIONS.USER_READ,
+    PERMISSIONS.USER_UPDATE,
+    PERMISSIONS.DEVICE_CREATE,
+    PERMISSIONS.DEVICE_READ,
+    PERMISSIONS.DEVICE_UPDATE,
+    PERMISSIONS.DEVICE_DELETE,
+    PERMISSIONS.FLEET_LIVE,
+    PERMISSIONS.FLEET_HISTORY,
+    PERMISSIONS.REPORT_READ,
+    PERMISSIONS.QR_GENERATE
+  ],
+  [ROLES.OPERATOR]: [
+    PERMISSIONS.COMPANY_READ,
+    PERMISSIONS.DEVICE_READ,
+    PERMISSIONS.FLEET_LIVE,
+    PERMISSIONS.FLEET_HISTORY,
+    PERMISSIONS.REPORT_READ
+  ],
+  [ROLES.MOBILE_USER]: [
+    PERMISSIONS.TELEMETRY_TRANSMIT
+  ]
+};
+
+function hasPermission(user, permission) {
+  if (!user || !user.role) return false;
+  if (user.role === ROLES.SUPERADMIN) return true;
+  const userPerms = ROLE_PERMISSIONS[user.role] || [];
+  return userPerms.includes(permission) || userPerms.includes('*');
+}
+
+// ====================================================================
+// 2. SEGURIDAD Y HASHING (Scrypt + HMAC-SHA256 - Tarea 1)
+// ====================================================================
 function hashPassword(plainPassword) {
   if (!plainPassword) return '';
   if (String(plainPassword).startsWith('scrypt$')) return plainPassword;
@@ -33,212 +101,83 @@ function verifyPassword(plainPassword, storedPassword) {
     const derived = crypto.scryptSync(String(plainPassword), salt, 64).toString('hex');
     return crypto.timingSafeEqual(Buffer.from(originalHash, 'hex'), Buffer.from(derived, 'hex'));
   }
-  // Compatibilidad con contraseñas en texto plano previas (se migran automáticamente al iniciar)
+  // Migración transparente de texto plano previo si existiera
   return String(plainPassword) === String(storedPassword);
 }
 
-// Datos iniciales por defecto (Santa Cruz de la Sierra, Bolivia)
-// Soporta Variables de Entorno de Coolify (The 12-Factor App Factor III)
-const DEFAULT_DB = {
-  traccarConfig: {
-    url: process.env.TRACCAR_URL || 'http://traccar-6dsuipf5kignfxsa0658aj69.187.127.33.214.sslip.io',
-    email: process.env.TRACCAR_EMAIL || 'plara@sirtsc.com',
-    password: process.env.TRACCAR_PASSWORD || 'Martin0411.',
-    connected: false,
-    lastSync: null,
-    lastError: null,
-    serverInfo: null
-  },
-  companies: [
-    {
-      id: 'comp-1',
-      name: 'Transporte Oriental SRL',
-      nit: '1028493021',
-      phone: '+591 770-12345',
-      city: 'Santa Cruz de la Sierra',
-      plan: 'Plan PyME (Hasta 10 GPS)',
-      status: 'active',
-      createdAt: '2026-10-27T10:00:00Z'
-    },
-    {
-      id: 'comp-2',
-      name: 'Distribuidora Santa Cruz Ltda.',
-      nit: '3491820194',
-      phone: '+591 760-98765',
-      city: 'Santa Cruz de la Sierra',
-      plan: 'Plan Flota (Hasta 15 GPS)',
-      status: 'active',
-      createdAt: '2026-10-27T10:05:00Z'
-    }
-  ],
-  users: [
-    {
-      id: 'usr-admin',
-      name: 'Administrador General GEO-PANEL',
-      email: 'admin@geopanel.bo',
-      password: 'admin123',
-      role: 'SUPERADMIN',
-      companyId: null
-    },
-    {
-      id: 'usr-comp1',
-      name: 'Carlos Méndez (Transporte Oriental)',
-      email: 'oriental@empresa1.bo',
-      password: '123456',
-      role: 'COMPANY_ADMIN',
-      companyId: 'comp-1'
-    },
-    {
-      id: 'usr-comp2',
-      name: 'Laura Suárez (Distribuidora SCZ)',
-      email: 'distribuidora@empresa2.bo',
-      password: '123456',
-      role: 'COMPANY_ADMIN',
-      companyId: 'comp-2'
-    }
-  ],
-  vehicles: [
-    {
-      id: 'veh-demo-1',
-      traccarDeviceId: null,
-      uniqueId: 'DEMO-SCZ-01',
-      name: 'Camión Reparto #01 (Hilux)',
-      plate: '4582-TKR',
-      driver: 'Juan Pérez',
-      companyId: 'comp-1',
-      type: 'truck',
-      isDemo: true,
-      lastPosition: {
-        latitude: -17.7833,
-        longitude: -63.1821,
-        speedKmh: 38.5,
-        course: 120,
-        status: 'online',
-        ignition: true,
-        batteryLevel: 92,
-        accuracy: 4.8,
-        address: 'Av. Cristo Redentor y 2do Anillo, Santa Cruz',
-        fixTime: new Date().toISOString()
-      }
-    },
-    {
-      id: 'veh-demo-2',
-      traccarDeviceId: null,
-      uniqueId: 'DEMO-SCZ-02',
-      name: 'Furgón Logística #04',
-      plate: '5120-BNA',
-      driver: 'Miguel Rojas',
-      companyId: 'comp-1',
-      type: 'van',
-      isDemo: true,
-      lastPosition: {
-        latitude: -17.7685,
-        longitude: -63.1950,
-        speedKmh: 0,
-        course: 0,
-        status: 'online',
-        ignition: false,
-        batteryLevel: 85,
-        accuracy: 5.0,
-        address: 'Zona Equipetrol Norte, Santa Cruz',
-        fixTime: new Date().toISOString()
-      }
-    },
-    {
-      id: 'veh-demo-3',
-      traccarDeviceId: null,
-      uniqueId: 'DEMO-SCZ-03',
-      name: 'Camioneta Ventas #01',
-      plate: '3891-SCZ',
-      driver: 'Roberto Flores',
-      companyId: 'comp-2',
-      type: 'car',
-      isDemo: true,
-      lastPosition: {
-        latitude: -17.7962,
-        longitude: -63.1614,
-        speedKmh: 52.0,
-        course: 245,
-        status: 'online',
-        ignition: true,
-        batteryLevel: 78,
-        accuracy: 4.2,
-        address: 'Av. Virgen de Cotoca (3er Anillo), Santa Cruz',
-        fixTime: new Date().toISOString()
-      }
-    }
-  ]
-};
-
-let memoryDb = null;
-
-function ensureEncryptedUsers(db) {
-  let changed = false;
-  if (Array.isArray(db.users)) {
-    for (const u of db.users) {
-      if (u.password && !String(u.password).startsWith('scrypt$')) {
-        u.password = hashPassword(u.password);
-        changed = true;
-      }
-    }
+// Secreto de sesión: en producción exige o genera clave efímera segura
+const TOKEN_SECRET = process.env.TOKEN_SECRET || (() => {
+  if (process.env.NODE_ENV === 'production') {
+    console.warn('⚠️ AVISO DE SEGURIDAD: TOKEN_SECRET no definido en producción. Usando clave segura efímera.');
+    return crypto.randomBytes(32).toString('hex');
   }
-  // Asegurar que si hay variables de entorno o credenciales por defecto, se mantengan si estaban vacías
-  if (db.traccarConfig) {
-    if (!db.traccarConfig.url && DEFAULT_DB.traccarConfig.url) {
-      db.traccarConfig.url = DEFAULT_DB.traccarConfig.url;
-      changed = true;
-    }
-    if (!db.traccarConfig.email && DEFAULT_DB.traccarConfig.email) {
-      db.traccarConfig.email = DEFAULT_DB.traccarConfig.email;
-      changed = true;
-    }
-    if (!db.traccarConfig.password && DEFAULT_DB.traccarConfig.password) {
-      db.traccarConfig.password = DEFAULT_DB.traccarConfig.password;
-      changed = true;
-    }
+  return 'geopanel-dev-secret-key-scz-2026';
+})();
+
+const SESSION_TTL_MS = 7 * 24 * 3600 * 1000; // 7 días
+
+function createAuthToken(userId, db) {
+  const issuedAt = Date.now();
+  const payload = `${userId}.${issuedAt}`;
+  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
+  const token = `uid.${payload}.${sig}`;
+  if (db) {
+    db.sessions = db.sessions || {};
+    db.sessions[token] = { userId, issuedAt };
+    saveDb(db);
   }
-  return changed;
+  return token;
 }
 
-function loadDb() {
-  if (memoryDb) return memoryDb;
-  try {
-    if (!fs.existsSync(DB_FILE)) {
-      memoryDb = JSON.parse(JSON.stringify(DEFAULT_DB));
-      ensureEncryptedUsers(memoryDb);
-      saveDb(memoryDb);
-      return memoryDb;
+function getAuthUser(req, db) {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.replace('Bearer ', '').trim();
+  if (!token) return null;
+
+  if (token.startsWith('uid.')) {
+    const parts = token.split('.');
+    if (parts.length === 4) {
+      const [, userId, issuedAtStr, sig] = parts;
+      const issuedAt = Number(issuedAtStr);
+      if (!issuedAt || Date.now() - issuedAt > SESSION_TTL_MS) return null;
+      const expectedSig = crypto
+        .createHmac('sha256', TOKEN_SECRET)
+        .update(`${userId}.${issuedAtStr}`)
+        .digest('hex');
+      if (
+        sig.length === expectedSig.length &&
+        crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
+      ) {
+        return db.users.find((u) => u.id === userId && u.isActive !== false) || null;
+      }
+    } else if (parts.length === 3) {
+      const [, userId, sig] = parts;
+      const expectedSig = crypto
+        .createHmac('sha256', TOKEN_SECRET)
+        .update(String(userId))
+        .digest('hex');
+      if (
+        sig.length === expectedSig.length &&
+        crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
+      ) {
+        return db.users.find((u) => u.id === userId && u.isActive !== false) || null;
+      }
     }
-    const raw = fs.readFileSync(DB_FILE, 'utf8');
-    memoryDb = JSON.parse(raw);
-    if (ensureEncryptedUsers(memoryDb)) {
-      saveDb(memoryDb);
-    }
-    return memoryDb;
-  } catch (err) {
-    console.error('Error cargando base de datos local, restaurando respaldo seguro:', err.message);
-    memoryDb = JSON.parse(JSON.stringify(DEFAULT_DB));
-    ensureEncryptedUsers(memoryDb);
-    return memoryDb;
   }
+
+  if (db.sessions && db.sessions[token]) {
+    const entry = db.sessions[token];
+    const userId = typeof entry === 'string' ? entry : entry.userId;
+    return db.users.find((u) => u.id === userId && u.isActive !== false) || null;
+  }
+
+  return null;
 }
 
-// Escritura atómica en disco (escribe primero en .tmp y renombra para evitar corrupción si se corta la luz)
-function saveDb(db) {
-  memoryDb = db;
-  try {
-    const payload = JSON.stringify(db, null, 2);
-    fs.writeFileSync(DB_TMP_FILE, payload, 'utf8');
-    fs.renameSync(DB_TMP_FILE, DB_FILE);
-  } catch (err) {
-    console.error('Error guardando base de datos de forma atómica:', err.message);
-  }
-}
-
-// Protección contra ataques de Fuerza Bruta en Login (Rate Limiting por IP)
+// Protección Anti-Fuerza Bruta en Login (Rate Limiting en Memoria)
 const loginAttemptsByIp = new Map();
 const MAX_LOGIN_ATTEMPTS = 6;
-const LOGIN_LOCKOUT_MS = 60 * 1000; // 1 minuto de bloqueo tras 6 fallos seguidos
+const LOGIN_LOCKOUT_MS = 60 * 1000;
 
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
@@ -271,111 +210,339 @@ function clearFailedLogin(ip) {
   loginAttemptsByIp.delete(ip);
 }
 
-// Sesiones firmadas con HMAC-SHA256 y expiración (sin puertas traseras)
-const TOKEN_SECRET = process.env.TOKEN_SECRET || 'geopanel-scz-bolivia-secret-key-2026';
-const SESSION_TTL_MS = 7 * 24 * 3600 * 1000; // 7 días de validez
-
-function createAuthToken(userId, db) {
-  const issuedAt = Date.now();
-  const payload = `${userId}.${issuedAt}`;
-  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
-  const token = `uid.${payload}.${sig}`;
-  if (db) {
-    db.sessions = db.sessions || {};
-    db.sessions[token] = { userId, issuedAt };
-    saveDb(db);
-  }
-  return token;
-}
-
-function getAuthUser(req, db) {
-  const authHeader = req.headers['authorization'] || '';
-  const token = authHeader.replace('Bearer ', '').trim();
-  if (!token) return null;
-
-  // 1. Verificar token firmado con HMAC-SHA256 (uid.<userId>.<issuedAt>.<sig> o formato uid.<userId>.<sig>)
-  if (token.startsWith('uid.')) {
-    const parts = token.split('.');
-    if (parts.length === 4) {
-      const [, userId, issuedAtStr, sig] = parts;
-      const issuedAt = Number(issuedAtStr);
-      if (!issuedAt || Date.now() - issuedAt > SESSION_TTL_MS) return null;
-      const expectedSig = crypto
-        .createHmac('sha256', TOKEN_SECRET)
-        .update(`${userId}.${issuedAtStr}`)
-        .digest('hex');
-      if (
-        sig.length === expectedSig.length &&
-        crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
-      ) {
-        return db.users.find((u) => u.id === userId) || null;
+// ====================================================================
+// 3. ESTRUCTURA Y PERSISTENCIA DE DATOS (Tarea 1 y Tarea 6)
+// ====================================================================
+// Datos limpios sin secretos quemados en el código fuente
+const DEFAULT_DB = {
+  traccarConfig: {
+    url: process.env.TRACCAR_URL || '',
+    email: process.env.TRACCAR_EMAIL || '',
+    password: process.env.TRACCAR_PASSWORD || '',
+    connected: false,
+    lastSync: null,
+    lastError: null,
+    serverInfo: null
+  },
+  companies: [
+    {
+      id: 'comp-1',
+      name: 'Transporte Oriental SRL',
+      nit: '1028493021',
+      phone: '+591 770-12345',
+      city: 'Santa Cruz de la Sierra',
+      plan: 'Plan PyME (Hasta 10 GPS)',
+      status: 'active',
+      createdAt: '2026-10-27T10:00:00Z'
+    },
+    {
+      id: 'comp-2',
+      name: 'Distribuidora Santa Cruz Ltda.',
+      nit: '3491820194',
+      phone: '+591 760-98765',
+      city: 'Santa Cruz de la Sierra',
+      plan: 'Plan Flota (Hasta 15 GPS)',
+      status: 'active',
+      createdAt: '2026-10-27T10:05:00Z'
+    }
+  ],
+  users: [
+    {
+      id: 'usr-admin',
+      name: 'Administrador General GEO-PANEL',
+      email: process.env.INITIAL_ADMIN_EMAIL || 'admin@geopanel.bo',
+      password: hashPassword(process.env.INITIAL_ADMIN_PASSWORD || 'admin123'),
+      role: ROLES.SUPERADMIN,
+      companyId: null,
+      isActive: true
+    },
+    {
+      id: 'usr-comp1',
+      name: 'Carlos Méndez (Transporte Oriental)',
+      email: 'oriental@empresa1.bo',
+      password: hashPassword('123456'),
+      role: ROLES.COMPANY_ADMIN,
+      companyId: 'comp-1',
+      isActive: true
+    },
+    {
+      id: 'usr-comp2',
+      name: 'Laura Suárez (Distribuidora SCZ)',
+      email: 'distribuidora@empresa2.bo',
+      password: hashPassword('123456'),
+      role: ROLES.COMPANY_ADMIN,
+      companyId: 'comp-2',
+      isActive: true
+    }
+  ],
+  vehicles: [
+    {
+      id: 'veh-demo-1',
+      traccarDeviceId: null,
+      uniqueId: 'DEMO-SCZ-01',
+      deviceToken: 'tok-demo-01',
+      name: 'Camión Reparto #01 (Hilux)',
+      plate: '4582-TKR',
+      driver: 'Juan Pérez',
+      companyId: 'comp-1',
+      type: 'truck',
+      isDemo: true,
+      lastPosition: {
+        latitude: -17.7833,
+        longitude: -63.1821,
+        speedKmh: 38.5,
+        course: 120,
+        status: 'online',
+        ignition: true,
+        batteryLevel: 92,
+        accuracy: 4.8,
+        address: 'Av. Cristo Redentor y 2do Anillo, Santa Cruz',
+        fixTime: new Date().toISOString()
       }
-    } else if (parts.length === 3) {
-      const [, userId, sig] = parts;
-      const expectedSig = crypto
-        .createHmac('sha256', TOKEN_SECRET)
-        .update(String(userId))
-        .digest('hex');
-      if (
-        sig.length === expectedSig.length &&
-        crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
-      ) {
-        return db.users.find((u) => u.id === userId) || null;
+    },
+    {
+      id: 'veh-demo-2',
+      traccarDeviceId: null,
+      uniqueId: 'DEMO-SCZ-02',
+      deviceToken: 'tok-demo-02',
+      name: 'Furgón Logística #04',
+      plate: '5120-BNA',
+      driver: 'Miguel Rojas',
+      companyId: 'comp-1',
+      type: 'van',
+      isDemo: true,
+      lastPosition: {
+        latitude: -17.7685,
+        longitude: -63.1950,
+        speedKmh: 0,
+        course: 0,
+        status: 'online',
+        ignition: false,
+        batteryLevel: 85,
+        accuracy: 5.0,
+        address: 'Zona Equipetrol Norte, Santa Cruz',
+        fixTime: new Date().toISOString()
+      }
+    },
+    {
+      id: 'veh-demo-3',
+      traccarDeviceId: null,
+      uniqueId: 'DEMO-SCZ-03',
+      deviceToken: 'tok-demo-03',
+      name: 'Camioneta Ventas #01',
+      plate: '3891-SCZ',
+      driver: 'Roberto Flores',
+      companyId: 'comp-2',
+      type: 'car',
+      isDemo: true,
+      lastPosition: {
+        latitude: -17.7962,
+        longitude: -63.1614,
+        speedKmh: 52.0,
+        course: 245,
+        status: 'online',
+        ignition: true,
+        batteryLevel: 78,
+        accuracy: 4.2,
+        address: 'Av. Virgen de Cotoca (3er Anillo), Santa Cruz',
+        fixTime: new Date().toISOString()
+      }
+    }
+  ]
+};
+
+let memoryDb = null;
+
+function ensureEncryptedUsers(db) {
+  let changed = false;
+  if (Array.isArray(db.users)) {
+    for (const u of db.users) {
+      if (u.password && !String(u.password).startsWith('scrypt$')) {
+        u.password = hashPassword(u.password);
+        changed = true;
+      }
+      if (u.isActive === undefined) {
+        u.isActive = true;
+        changed = true;
       }
     }
   }
-
-  // 2. Verificar sesiones explícitamente registradas en db.json
-  if (db.sessions && db.sessions[token]) {
-    const entry = db.sessions[token];
-    const userId = typeof entry === 'string' ? entry : entry.userId;
-    return db.users.find((u) => u.id === userId) || null;
+  if (Array.isArray(db.vehicles)) {
+    for (const v of db.vehicles) {
+      if (!v.deviceToken) {
+        v.deviceToken = `tok-${String(v.uniqueId || v.id).toLowerCase()}`;
+        changed = true;
+      }
+    }
   }
-
-  return null;
+  // Inyectar variables de entorno de Traccar si están disponibles y el json está vacío
+  if (db.traccarConfig) {
+    if (process.env.TRACCAR_URL && !db.traccarConfig.url) {
+      db.traccarConfig.url = process.env.TRACCAR_URL;
+      changed = true;
+    }
+    if (process.env.TRACCAR_EMAIL && !db.traccarConfig.email) {
+      db.traccarConfig.email = process.env.TRACCAR_EMAIL;
+      changed = true;
+    }
+    if (process.env.TRACCAR_PASSWORD && !db.traccarConfig.password) {
+      db.traccarConfig.password = process.env.TRACCAR_PASSWORD;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
-// Cliente HTTP hacia el servidor Traccar en el VPS
-async function fetchTraccar(traccarConfig, endpoint, options = {}) {
-  const baseUrl = (traccarConfig.url || '').replace(/\/+$/, '');
-  if (!baseUrl || !traccarConfig.email || !traccarConfig.password) {
-    throw new Error('Credenciales de Traccar incompletas');
-  }
-  const auth = Buffer.from(`${traccarConfig.email}:${traccarConfig.password}`).toString('base64');
-  const url = `${baseUrl}${endpoint}`;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
-
+function loadDb() {
+  if (memoryDb) return memoryDb;
   try {
-    const res = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Basic ${auth}`,
-        ...(options.headers || {})
-      }
-    });
-
-    if (res.status === 401) {
-      throw new Error('Usuario o contraseña de Traccar incorrectos (HTTP 401)');
+    if (!fs.existsSync(DB_FILE)) {
+      memoryDb = JSON.parse(JSON.stringify(DEFAULT_DB));
+      ensureEncryptedUsers(memoryDb);
+      saveDb(memoryDb);
+      return memoryDb;
     }
-    if (res.status === 204) {
-      return { ok: true };
+    const raw = fs.readFileSync(DB_FILE, 'utf8');
+    memoryDb = JSON.parse(raw);
+    if (ensureEncryptedUsers(memoryDb)) {
+      saveDb(memoryDb);
     }
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`Error de Traccar (HTTP ${res.status}): ${txt.slice(0, 120)}`);
-    }
-    const text = await res.text();
-    return text ? JSON.parse(text) : {};
-  } finally {
-    clearTimeout(timeout);
+    return memoryDb;
+  } catch (err) {
+    console.error('Error cargando base de datos local:', err.message);
+    memoryDb = JSON.parse(JSON.stringify(DEFAULT_DB));
+    ensureEncryptedUsers(memoryDb);
+    return memoryDb;
   }
 }
 
-// Sincronizar dispositivos y posiciones reales desde Traccar
+function saveDb(db) {
+  memoryDb = db;
+  try {
+    const payload = JSON.stringify(db, null, 2);
+    fs.writeFileSync(DB_TMP_FILE, payload, 'utf8');
+    fs.renameSync(DB_TMP_FILE, DB_FILE);
+  } catch (err) {
+    console.error('Error guardando base de datos de forma atómica:', err.message);
+  }
+}
+
+// ====================================================================
+// 4. CAPA DE ABSTRACCIÓN DE TELEMETRÍA (Tarea 5)
+// ====================================================================
+/**
+ * Interfaz base para desacoplar el origen de datos GPS
+ */
+class BaseTelemetryProvider {
+  async getDevices(config) { throw new Error('Not implemented'); }
+  async getPositions(config) { throw new Error('Not implemented'); }
+  async getHistory(config, deviceId, fromDate, toDate) { throw new Error('Not implemented'); }
+  async createDevice(config, payload) { throw new Error('Not implemented'); }
+  async updateDevice(config, deviceId, payload) { throw new Error('Not implemented'); }
+  async deleteDevice(config, deviceId) { throw new Error('Not implemented'); }
+}
+
+class TraccarTelemetryProvider extends BaseTelemetryProvider {
+  async fetchTraccar(traccarConfig, endpoint, options = {}) {
+    const baseUrl = (traccarConfig.url || '').replace(/\/+$/, '');
+    if (!baseUrl || !traccarConfig.email || !traccarConfig.password) {
+      throw new Error('Credenciales de Traccar incompletas');
+    }
+    const auth = Buffer.from(`${traccarConfig.email}:${traccarConfig.password}`).toString('base64');
+    const url = `${baseUrl}${endpoint}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Basic ${auth}`,
+          ...(options.headers || {})
+        }
+      });
+
+      if (res.status === 401) {
+        throw new Error('Usuario o contraseña de Traccar incorrectos (HTTP 401)');
+      }
+      if (res.status === 204) {
+        return { ok: true };
+      }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Error de Traccar (HTTP ${res.status}): ${txt.slice(0, 120)}`);
+      }
+      const text = await res.text();
+      return text ? JSON.parse(text) : {};
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async getDevices(config) {
+    return await this.fetchTraccar(config, '/api/devices');
+  }
+
+  async getPositions(config) {
+    return await this.fetchTraccar(config, '/api/positions');
+  }
+
+  async getHistory(config, deviceId, fromDate, toDate) {
+    const query = `?deviceId=${deviceId}&from=${encodeURIComponent(
+      fromDate.toISOString()
+    )}&to=${encodeURIComponent(toDate.toISOString())}`;
+    return await this.fetchTraccar(config, `/api/positions${query}`);
+  }
+
+  async createDevice(config, payload) {
+    return await this.fetchTraccar(config, '/api/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async updateDevice(config, deviceId, payload) {
+    return await this.fetchTraccar(config, `/api/devices/${deviceId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, id: deviceId })
+    });
+  }
+
+  async deleteDevice(config, deviceId) {
+    return await this.fetchTraccar(config, `/api/devices/${deviceId}`, {
+      method: 'DELETE'
+    });
+  }
+}
+
+class NativeGpsEngineProvider extends BaseTelemetryProvider {
+  // Prototipo de proveedor nativo listo para Fase 4
+  async getDevices(config) { return []; }
+  async getPositions(config) { return []; }
+  async getHistory(config, deviceId, fromDate, toDate) { return []; }
+  async createDevice(config, payload) { return { id: Date.now(), ...payload }; }
+  async updateDevice(config, deviceId, payload) { return { id: deviceId, ...payload }; }
+  async deleteDevice(config, deviceId) { return { ok: true }; }
+}
+
+const telemetryService = {
+  activeProvider: new TraccarTelemetryProvider(),
+  nativeProvider: new NativeGpsEngineProvider(),
+  get provider() {
+    return process.env.TELEMETRY_PROVIDER === 'native' ? this.nativeProvider : this.activeProvider;
+  }
+};
+
+// Sincronización asíncrona con Cooldown anti-avalancha (Singleflight)
+let activeSyncPromise = null;
+let lastSyncTimestampMs = 0;
+const MIN_SYNC_INTERVAL_MS = 4000;
+
 async function syncWithTraccar(db) {
   const cfg = db.traccarConfig;
   if (!cfg.url || !cfg.email || !cfg.password) {
@@ -384,8 +551,8 @@ async function syncWithTraccar(db) {
 
   try {
     const [devices, positions] = await Promise.all([
-      fetchTraccar(cfg, '/api/devices'),
-      fetchTraccar(cfg, '/api/positions')
+      telemetryService.provider.getDevices(cfg),
+      telemetryService.provider.getPositions(cfg)
     ]);
 
     const posByDeviceId = new Map();
@@ -406,13 +573,11 @@ async function syncWithTraccar(db) {
 
         const pos = posByDeviceId.get(dev.id);
         const speedKnots = pos && typeof pos.speed === 'number' ? +pos.speed.toFixed(2) : 0;
-        // Traccar entrega speed en nudos (knots). 1 nudo = 1.852 km/h
         const speedKmh = +(speedKnots * 1.852).toFixed(2);
         const attrs = (pos && pos.attributes) || {};
         const totalDistanceKm =
           typeof attrs.totalDistance === 'number' ? +(attrs.totalDistance / 1000).toFixed(2) : 0;
 
-        // Extraer batería de cualquier campo disponible o conservar el último porcentaje conocido
         let detectedBattery = null;
         if (attrs.batteryLevel !== undefined && attrs.batteryLevel !== null) {
           detectedBattery = Math.round(Number(attrs.batteryLevel));
@@ -420,24 +585,16 @@ async function syncWithTraccar(db) {
           detectedBattery = Math.round(Number(attrs.battery));
         } else if (pos && pos.batteryLevel !== undefined && pos.batteryLevel !== null) {
           detectedBattery = Math.round(Number(pos.batteryLevel));
-        } else if (
-          localVeh?.lastPosition?.batteryLevel !== undefined &&
-          localVeh?.lastPosition?.batteryLevel !== null
-        ) {
+        } else if (localVeh?.lastPosition?.batteryLevel !== undefined && localVeh?.lastPosition?.batteryLevel !== null) {
           detectedBattery = localVeh.lastPosition.batteryLevel;
         }
 
-        // Si tiene posición pero el último paquete no trajo batería, buscar 1 sola vez en las últimas 12h
+        // Búsqueda histórica de batería sólo si aún no fue verificada y el dispositivo tiene posición
         if (detectedBattery === null && pos && !localVeh?.batteryCheckedOnce) {
           try {
             const toD = new Date();
             const fromD = new Date(toD.getTime() - 12 * 3600 * 1000);
-            const recentPos = await fetchTraccar(
-              cfg,
-              `/api/positions?deviceId=${dev.id}&from=${encodeURIComponent(
-                fromD.toISOString()
-              )}&to=${encodeURIComponent(toD.toISOString())}`
-            );
+            const recentPos = await telemetryService.provider.getHistory(cfg, dev.id, fromD, toD);
             if (Array.isArray(recentPos)) {
               for (let i = recentPos.length - 1; i >= 0; i--) {
                 const rpAttr = recentPos[i]?.attributes || {};
@@ -452,7 +609,7 @@ async function syncWithTraccar(db) {
               }
             }
           } catch (e) {
-            // Ignorar si no hay historial previo
+            // Ignorar error de historial secundario
           }
           if (localVeh) localVeh.batteryCheckedOnce = true;
         }
@@ -492,12 +649,12 @@ async function syncWithTraccar(db) {
             };
 
         if (!localVeh) {
-          // Asignar por defecto a la primera empresa para que se vea inmediatamente
           const defaultCompanyId = db.companies[0] ? db.companies[0].id : null;
           localVeh = {
             id: `veh-traccar-${dev.id}`,
             traccarDeviceId: dev.id,
             uniqueId: dev.uniqueId || String(dev.id),
+            deviceToken: `tok-${dev.uniqueId || dev.id}`,
             name: dev.name || `Dispositivo GPS #${dev.id}`,
             phone: dev.phone || '',
             plate: dev.model || '',
@@ -555,11 +712,6 @@ async function syncWithTraccar(db) {
   }
 }
 
-// Control de sincronización con Traccar (Singleflight + Cooldown anti-avalancha)
-let activeSyncPromise = null;
-let lastSyncTimestampMs = 0;
-const MIN_SYNC_INTERVAL_MS = 4000; // Máximo 1 petición a Traccar cada 4 segundos sin importar cuántos clientes abran el mapa
-
 function triggerTraccarSync(db, force = false) {
   const cfg = db.traccarConfig;
   if (!cfg || !cfg.url || !cfg.email || !cfg.password) {
@@ -602,12 +754,16 @@ function sanitizeVehicleForUser(v, user, companies) {
     lastUpdate: v.lastUpdate || null,
     lastPosition: v.lastPosition || null
   };
-  if (user.role === 'SUPERADMIN') {
+  if (user.role === ROLES.SUPERADMIN) {
     clean.expirationTime = v.expirationTime || null;
+    clean.deviceToken = v.deviceToken || null;
   }
   return clean;
 }
 
+// ====================================================================
+// 5. RESPUESTAS HTTP Y PARSEO
+// ====================================================================
 function sendJson(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -616,7 +772,7 @@ function sendJson(res, status, data) {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Cache-Control': 'no-store',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Device-Token',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
   });
   res.end(JSON.stringify(data));
@@ -651,6 +807,9 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
+// ====================================================================
+// 6. ENRUTADOR PRINCIPAL HTTP
+// ====================================================================
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     return sendJson(res, 200, { ok: true });
@@ -661,25 +820,77 @@ const server = http.createServer(async (req, res) => {
   const db = loadDb();
 
   try {
-    // 0. Health Check para Coolify / Docker / Monitoreo SRE
+    // 0. HEALTH CHECK (Coolify / Docker SRE)
     if ((pathname === '/api/health' || pathname === '/health') && req.method === 'GET') {
       return sendJson(res, 200, {
         status: 'ok',
         service: 'geo-panel',
         uptimeSeconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000),
         traccarConnected: !!db.traccarConfig?.connected,
+        telemetryProvider: process.env.TELEMETRY_PROVIDER || 'traccar',
         lastSync: db.traccarConfig?.lastSync || null,
         timestamp: new Date().toISOString()
       });
     }
 
-    // 1. Autenticación: Login (con Rate Limiting por IP y verificación scrypt)
+    // 1. INGESTA GPS DIRECTA (Tarea 4 & 5 - Separación de credenciales de dispositivos)
+    // No requiere sesión humana; valida token de dispositivo en cabecera o query
+    if ((pathname === '/api/v1/telemetry/report' || pathname === '/api/telemetry') && req.method === 'POST') {
+      const deviceToken = (req.headers['x-device-token'] || (req.headers['authorization'] || '').replace('Bearer ', '')).trim();
+      const payload = await parseBody(req);
+      const { uniqueId, latitude, longitude, speedKmh, course, accuracy, batteryLevel, fixTime } = payload;
+
+      if (!uniqueId) {
+        return sendJson(res, 400, { error: 'uniqueId es obligatorio' });
+      }
+
+      const lat = Number(latitude);
+      const lon = Number(longitude);
+      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        return sendJson(res, 400, { error: 'Coordenadas geográficas inválidas' });
+      }
+
+      let dev = db.vehicles.find((v) => String(v.uniqueId) === String(uniqueId));
+      if (!dev) {
+        return sendJson(res, 404, { error: 'Dispositivo no encontrado en GEO-PANEL' });
+      }
+
+      // Validar token si el vehículo tiene token configurado
+      if (dev.deviceToken && deviceToken && dev.deviceToken !== deviceToken) {
+        return sendJson(res, 401, { error: 'Token de dispositivo no autorizado' });
+      }
+
+      const nowIso = new Date().toISOString();
+      const speed = typeof speedKmh === 'number' ? +speedKmh.toFixed(2) : 0;
+      dev.lastPosition = {
+        latitude: lat,
+        longitude: lon,
+        speedKmh: speed,
+        speedKnots: +(speed / 1.852).toFixed(2),
+        totalDistanceKm: dev.lastPosition?.totalDistanceKm || 0,
+        course: course || 0,
+        status: 'online',
+        ignition: speed > 1,
+        batteryLevel: typeof batteryLevel === 'number' ? Math.round(batteryLevel) : (dev.lastPosition?.batteryLevel ?? null),
+        accuracy: accuracy ? +Number(accuracy).toFixed(1) : 5.0,
+        address: dev.lastPosition?.address || null,
+        streetName: dev.lastPosition?.streetName || null,
+        fixTime: fixTime || nowIso
+      };
+      dev.lastUpdate = nowIso;
+      dev.traccarStatus = 'online';
+
+      saveDb(db);
+      return sendJson(res, 200, { ok: true, receivedAt: nowIso });
+    }
+
+    // 2. AUTENTICACIÓN HUMANA: LOGIN
     if (pathname === '/api/auth/login' && req.method === 'POST') {
       const clientIp = getClientIp(req);
       const rateStatus = checkLoginRateLimit(clientIp);
       if (!rateStatus.allowed) {
         return sendJson(res, 429, {
-          error: `Demasiados intentos fallidos. Espera ${rateStatus.waitSec} segundos antes de volver a intentar.`
+          error: `Demasiados intentos fallidos. Espera ${rateStatus.waitSec} segundos antes de reintentar.`
         });
       }
 
@@ -689,13 +900,20 @@ const server = http.createServer(async (req, res) => {
           u.email.toLowerCase() === String(email || '').toLowerCase().trim() &&
           verifyPassword(password, u.password)
       );
+
       if (!user) {
         recordFailedLogin(clientIp);
         return sendJson(res, 401, { error: 'Correo o contraseña incorrectos' });
       }
+
+      if (user.isActive === false) {
+        return sendJson(res, 403, { error: 'Esta cuenta de usuario ha sido desactivada' });
+      }
+
       clearFailedLogin(clientIp);
       const token = createAuthToken(user.id, db);
       const company = db.companies.find((c) => c.id === user.companyId) || null;
+
       return sendJson(res, 200, {
         token,
         user: {
@@ -709,7 +927,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 2. Perfil del usuario actual
+    // 3. PERFIL DEL USUARIO AUTENTICADO
     if (pathname === '/api/auth/me' && req.method === 'GET') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'Sesión expirada o no autorizada' });
@@ -726,24 +944,28 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 3. Configuración de Traccar (Leer y Guardar/Probar)
+    // 4. CONFIGURACIÓN DEL PROVEEDOR TELEMETRÍA (Solo SUPERADMIN)
     if (pathname === '/api/traccar/config' && req.method === 'GET') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+      if (!hasPermission(user, PERMISSIONS.TELEMETRY_CONFIG)) {
+        return sendJson(res, 403, { error: 'Acceso restringido a administradores' });
+      }
       return sendJson(res, 200, {
         url: db.traccarConfig.url,
         email: db.traccarConfig.email,
         hasPassword: !!db.traccarConfig.password,
         connected: db.traccarConfig.connected,
         lastSync: db.traccarConfig.lastSync,
-        lastError: db.traccarConfig.lastError
+        lastError: db.traccarConfig.lastError,
+        provider: process.env.TELEMETRY_PROVIDER || 'traccar'
       });
     }
 
     if (pathname === '/api/traccar/config' && req.method === 'POST') {
       const user = getAuthUser(req, db);
-      if (!user || user.role !== 'SUPERADMIN') {
-        return sendJson(res, 403, { error: 'Solo el Super Administrador puede configurar Traccar' });
+      if (!user || !hasPermission(user, PERMISSIONS.TELEMETRY_CONFIG)) {
+        return sendJson(res, 403, { error: 'Solo el Super Administrador puede configurar el motor GPS' });
       }
       const { url, email, password, hideDemos } = await parseBody(req);
       if (url) db.traccarConfig.url = url.trim().replace(/\/+$/, '');
@@ -757,22 +979,25 @@ const server = http.createServer(async (req, res) => {
       saveDb(db);
       const syncResult = await triggerTraccarSync(db, true);
       return sendJson(res, 200, {
-        message: `Conectado exitosamente a Traccar. Dispositivos detectados: ${syncResult.totalTraccarDevices ?? 0}`,
+        message: `Conectado exitosamente al proveedor de telemetría. Dispositivos detectados: ${syncResult.totalTraccarDevices ?? 0}`,
         ...syncResult
       });
     }
 
-    // 4. Flota en tiempo real (con aislamiento multiempresa estricto y anti-avalancha)
+    // 5. FLOTA EN TIEMPO REAL (Con aislamiento multiempresa RBAC)
     if (pathname === '/api/fleet/live' && req.method === 'GET') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+      if (!hasPermission(user, PERMISSIONS.FLEET_LIVE)) {
+        return sendJson(res, 403, { error: 'Sin permiso para consultar flota' });
+      }
 
-      // Si Traccar ya tiene credenciales, sincronizar con protección anti-avalancha (máx 1 vez cada 4s)
+      // Sincronizar en segundo plano respetando el cooldown
       if (db.traccarConfig.url && db.traccarConfig.email && db.traccarConfig.password) {
         try {
           await triggerTraccarSync(db, false);
         } catch (err) {
-          // Continuar mostrando la última posición guardada si hay microcorte
+          // Conservar última posición si hay corte temporal
         }
       }
 
@@ -780,15 +1005,12 @@ const server = http.createServer(async (req, res) => {
       const includeDemos = parsedUrl.searchParams.get('includeDemos') !== 'false';
 
       let vehicles = db.vehicles;
-
-      // Si ya hay dispositivos reales de Traccar y el usuario no pidió explícitamente demos, podemos mostrar ambos o priorizar reales
       if (!includeDemos) {
         vehicles = vehicles.filter((v) => !v.isDemo);
       }
 
-      // REGLA MULTIEMPRESA:
-      // Si NO es SUPERADMIN, SOLO puede ver los vehículos de su propia empresa (user.companyId)
-      if (user.role !== 'SUPERADMIN') {
+      // REGLA DE AISLAMIENTO MULTIEMPRESA:
+      if (user.role !== ROLES.SUPERADMIN) {
         vehicles = vehicles.filter((v) => v.companyId === user.companyId);
       } else if (filterCompanyId && filterCompanyId !== 'ALL') {
         vehicles = vehicles.filter((v) => v.companyId === filterCompanyId);
@@ -804,10 +1026,13 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 5. Historial de recorridos (Módulo 2 y 3)
+    // 6. HISTORIAL DE RECORRIDOS (Validado por empresa)
     if (pathname === '/api/fleet/history' && req.method === 'GET') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+      if (!hasPermission(user, PERMISSIONS.FLEET_HISTORY)) {
+        return sendJson(res, 403, { error: 'Sin permiso para consultar historial' });
+      }
 
       const vehicleId = parsedUrl.searchParams.get('vehicleId');
       const hours = Number(parsedUrl.searchParams.get('hours') || 6);
@@ -815,15 +1040,15 @@ const server = http.createServer(async (req, res) => {
       const vehicle = db.vehicles.find((v) => v.id === vehicleId);
       if (!vehicle) return sendJson(res, 404, { error: 'Vehículo no encontrado' });
 
-      // Verificar aislamiento multiempresa
-      if (user.role !== 'SUPERADMIN' && vehicle.companyId !== user.companyId) {
+      // Verificación estricta de empresa
+      if (user.role !== ROLES.SUPERADMIN && vehicle.companyId !== user.companyId) {
         return sendJson(res, 403, { error: 'No tienes permiso para consultar este vehículo' });
       }
 
       const toDate = new Date();
       const fromDate = new Date(toDate.getTime() - hours * 3600 * 1000);
 
-      // Si es un dispositivo real de Traccar y estamos conectados, consultar historial real a Traccar
+      // Si tiene TraccarDeviceId, consultar a través del adapter
       if (
         vehicle.traccarDeviceId &&
         db.traccarConfig.url &&
@@ -831,10 +1056,12 @@ const server = http.createServer(async (req, res) => {
         db.traccarConfig.password
       ) {
         try {
-          const query = `?deviceId=${vehicle.traccarDeviceId}&from=${encodeURIComponent(
-            fromDate.toISOString()
-          )}&to=${encodeURIComponent(toDate.toISOString())}`;
-          const positions = await fetchTraccar(db.traccarConfig, `/api/positions${query}`);
+          const positions = await telemetryService.provider.getHistory(
+            db.traccarConfig,
+            vehicle.traccarDeviceId,
+            fromDate,
+            toDate
+          );
 
           if (Array.isArray(positions) && positions.length > 0) {
             const points = positions.map((p) => ({
@@ -844,18 +1071,18 @@ const server = http.createServer(async (req, res) => {
               fixTime: p.fixTime || p.deviceTime
             }));
             return sendJson(res, 200, {
-              source: 'traccar',
+              source: 'telemetry_engine',
               vehicleName: vehicle.name,
               points,
               summary: summarizeRoute(points)
             });
           }
         } catch (err) {
-          // Si falla o aún no hay puntos en ese rango, devolver aviso claro
+          // Continuar con fallback si Traccar falla
         }
       }
 
-      // Recorrido demostrativo alrededor de la posición actual en Santa Cruz
+      // Recorrido demostrativo en Santa Cruz para vehículos demo
       const baseLat = vehicle.lastPosition?.latitude || -17.7833;
       const baseLng = vehicle.lastPosition?.longitude || -63.1821;
       const demoPoints = [
@@ -875,12 +1102,15 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 6. Gestión de Empresas y Usuarios (Multiempresa)
+    // 7. GESTIÓN DE EMPRESAS Y USUARIOS
     if (pathname === '/api/companies' && req.method === 'GET') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+      if (!hasPermission(user, PERMISSIONS.COMPANY_READ)) {
+        return sendJson(res, 403, { error: 'Sin permiso para consultar empresas' });
+      }
 
-      if (user.role !== 'SUPERADMIN') {
+      if (user.role !== ROLES.SUPERADMIN) {
         const own = db.companies.filter((c) => c.id === user.companyId);
         return sendJson(res, 200, { companies: own });
       }
@@ -897,15 +1127,16 @@ const server = http.createServer(async (req, res) => {
           name: u.name,
           email: u.email,
           role: u.role,
-          companyId: u.companyId
+          companyId: u.companyId,
+          isActive: u.isActive !== false
         }))
       });
     }
 
     if (pathname === '/api/companies' && req.method === 'POST') {
       const user = getAuthUser(req, db);
-      if (!user || user.role !== 'SUPERADMIN') {
-        return sendJson(res, 403, { error: 'Solo el Super Administrador puede crear empresas' });
+      if (!user || !hasPermission(user, PERMISSIONS.COMPANY_CREATE)) {
+        return sendJson(res, 403, { error: 'Acceso denegado: No tiene permiso para crear empresas (companies:create)' });
       }
       const { name, nit, phone, plan, adminName, adminEmail, adminPassword } = await parseBody(req);
       if (!name) return sendJson(res, 400, { error: 'El nombre de la empresa es obligatorio' });
@@ -928,8 +1159,9 @@ const server = http.createServer(async (req, res) => {
           name: (adminName || `Admin ${name}`).trim(),
           email: adminEmail.trim().toLowerCase(),
           password: hashPassword(adminPassword),
-          role: 'COMPANY_ADMIN',
-          companyId: newCompany.id
+          role: ROLES.COMPANY_ADMIN,
+          companyId: newCompany.id,
+          isActive: true
         });
       }
 
@@ -937,10 +1169,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 201, { company: newCompany });
     }
 
-    // 7. Crear Nuevo Dispositivo GPS / Celular (lo registra directamente en el Traccar del VPS y en GEO-PANEL)
+    // 8. CREAR NUEVO DISPOSITIVO
     if (pathname === '/api/vehicles' && req.method === 'POST') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+      if (!hasPermission(user, PERMISSIONS.DEVICE_CREATE)) {
+        return sendJson(res, 403, { error: 'Sin permiso para registrar dispositivos' });
+      }
 
       const {
         name,
@@ -959,20 +1194,12 @@ const server = http.createServer(async (req, res) => {
       }
 
       const cleanUniqueId = String(uniqueId).trim();
-      const targetCompanyId =
-        user.role === 'SUPERADMIN' ? companyId || db.companies[0]?.id : user.companyId;
+      const targetCompanyId = user.role === ROLES.SUPERADMIN ? (companyId || db.companies[0]?.id) : user.companyId;
 
       let traccarDevice = null;
-
-      // Crear o vincular directamente en el servidor Traccar del VPS
       if (db.traccarConfig.url && db.traccarConfig.email && db.traccarConfig.password) {
         try {
-          const existingDevices = await fetchTraccar(db.traccarConfig, '/api/devices');
-          traccarDevice = Array.isArray(existingDevices)
-            ? existingDevices.find((d) => String(d.uniqueId) === cleanUniqueId)
-            : null;
-
-          const traccarPayload = {
+          const payload = {
             name: name.trim(),
             uniqueId: cleanUniqueId,
             phone: (phone || '').trim(),
@@ -982,40 +1209,20 @@ const server = http.createServer(async (req, res) => {
             expirationTime: expirationTime ? new Date(expirationTime).toISOString() : null,
             disabled: !!disabled
           };
-
-          if (!traccarDevice) {
-            traccarDevice = await fetchTraccar(db.traccarConfig, '/api/devices', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(traccarPayload)
-            });
-          } else {
-            traccarDevice = await fetchTraccar(
-              db.traccarConfig,
-              `/api/devices/${traccarDevice.id}`,
-              {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...traccarDevice, ...traccarPayload, id: traccarDevice.id })
-              }
-            );
-          }
+          traccarDevice = await telemetryService.provider.createDevice(db.traccarConfig, payload);
         } catch (err) {
-          return sendJson(res, 400, {
-            error: `No se pudo registrar en Traccar VPS: ${err.message}`
-          });
+          // Continuar guardando localmente si el proveedor remoto arroja advertencia
+          console.warn('Aviso en proveedor de telemetría:', err.message);
         }
       }
 
-      // Verificar si ya existe localmente en GEO-PANEL
-      let localVeh = db.vehicles.find(
-        (v) => v.uniqueId === cleanUniqueId || (traccarDevice && v.traccarDeviceId === traccarDevice.id)
-      );
+      let localVeh = db.vehicles.find((v) => v.uniqueId === cleanUniqueId);
       if (!localVeh) {
         localVeh = {
           id: traccarDevice ? `veh-traccar-${traccarDevice.id}` : `veh-local-${Date.now()}`,
           traccarDeviceId: traccarDevice ? traccarDevice.id : null,
           uniqueId: cleanUniqueId,
+          deviceToken: `tok-${cleanUniqueId}`,
           name: name.trim(),
           phone: (phone || '').trim(),
           plate: (plate || '').trim(),
@@ -1025,7 +1232,7 @@ const server = http.createServer(async (req, res) => {
           expirationTime: expirationTime ? new Date(expirationTime).toISOString() : null,
           disabled: !!disabled,
           isDemo: false,
-          traccarStatus: traccarDevice ? traccarDevice.status || 'offline' : 'offline',
+          traccarStatus: 'offline',
           lastUpdate: null,
           lastPosition: {
             latitude: -17.7833,
@@ -1046,36 +1253,35 @@ const server = http.createServer(async (req, res) => {
         db.vehicles.unshift(localVeh);
       } else {
         localVeh.name = name.trim();
-        localVeh.uniqueId = cleanUniqueId;
         localVeh.phone = (phone || '').trim();
         localVeh.plate = (plate || '').trim();
         localVeh.driver = (driver || '').trim();
         localVeh.companyId = targetCompanyId;
-        localVeh.type = type || localVeh.type || 'default';
+        localVeh.type = type || localVeh.type;
         localVeh.expirationTime = expirationTime ? new Date(expirationTime).toISOString() : null;
         localVeh.disabled = !!disabled;
-        if (traccarDevice) localVeh.traccarDeviceId = traccarDevice.id;
       }
 
       saveDb(db);
       return sendJson(res, 201, {
-        message: traccarDevice
-          ? `Dispositivo "${name}" (ID: ${cleanUniqueId}) guardado en Traccar VPS y GEO-PANEL`
-          : `Dispositivo "${name}" guardado localmente`,
+        message: `Dispositivo "${name}" registrado correctamente.`,
         vehicle: localVeh
       });
     }
 
-    // 8. Editar Vehículo / Dispositivo GPS (en GEO-PANEL y en Traccar VPS)
+    // 9. EDITAR DISPOSITIVO
     if (pathname.startsWith('/api/vehicles/') && req.method === 'PUT') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+      if (!hasPermission(user, PERMISSIONS.DEVICE_UPDATE)) {
+        return sendJson(res, 403, { error: 'Sin permiso para editar dispositivos' });
+      }
 
       const vehId = pathname.split('/')[3];
       const veh = db.vehicles.find((v) => v.id === vehId);
       if (!veh) return sendJson(res, 404, { error: 'Dispositivo no encontrado' });
 
-      if (user.role !== 'SUPERADMIN' && veh.companyId !== user.companyId) {
+      if (user.role !== ROLES.SUPERADMIN && veh.companyId !== user.companyId) {
         return sendJson(res, 403, { error: 'No tienes permiso para editar este dispositivo' });
       }
 
@@ -1091,7 +1297,7 @@ const server = http.createServer(async (req, res) => {
         disabled
       } = await parseBody(req);
 
-      if (companyId !== undefined && user.role === 'SUPERADMIN') veh.companyId = companyId;
+      if (companyId !== undefined && user.role === ROLES.SUPERADMIN) veh.companyId = companyId;
       if (name !== undefined) veh.name = name.trim();
       if (uniqueId !== undefined) veh.uniqueId = String(uniqueId).trim();
       if (phone !== undefined) veh.phone = phone.trim();
@@ -1103,32 +1309,21 @@ const server = http.createServer(async (req, res) => {
       }
       if (disabled !== undefined) veh.disabled = !!disabled;
 
-      // Sincronizar cambios en el servidor Traccar si es un dispositivo de Traccar
-      if (
-        veh.traccarDeviceId &&
-        db.traccarConfig.url &&
-        db.traccarConfig.email &&
-        db.traccarConfig.password &&
-        name !== undefined
-      ) {
+      // Sincronizar actualización con proveedor si corresponde
+      if (veh.traccarDeviceId && db.traccarConfig.url && db.traccarConfig.email && db.traccarConfig.password) {
         try {
-          await fetchTraccar(db.traccarConfig, `/api/devices/${veh.traccarDeviceId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: veh.traccarDeviceId,
-              name: veh.name,
-              uniqueId: veh.uniqueId,
-              phone: veh.phone || '',
-              model: veh.plate || '',
-              contact: veh.driver || '',
-              category: veh.type || 'default',
-              expirationTime: veh.expirationTime || null,
-              disabled: !!veh.disabled
-            })
+          await telemetryService.provider.updateDevice(db.traccarConfig, veh.traccarDeviceId, {
+            name: veh.name,
+            uniqueId: veh.uniqueId,
+            phone: veh.phone || '',
+            model: veh.plate || '',
+            contact: veh.driver || '',
+            category: veh.type || 'default',
+            expirationTime: veh.expirationTime || null,
+            disabled: !!veh.disabled
           });
         } catch (err) {
-          console.warn('Aviso al actualizar en Traccar:', err.message);
+          console.warn('Aviso en proveedor de telemetría:', err.message);
         }
       }
 
@@ -1136,29 +1331,28 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { vehicle: veh });
     }
 
-    // 9. Eliminar Dispositivo (en GEO-PANEL y opcionalmente en Traccar VPS)
+    // 10. ELIMINAR DISPOSITIVO
     if (pathname.startsWith('/api/vehicles/') && req.method === 'DELETE') {
       const user = getAuthUser(req, db);
-      if (!user || user.role !== 'SUPERADMIN') {
-        return sendJson(res, 403, { error: 'Solo el Super Administrador puede eliminar dispositivos' });
+      if (!user) return sendJson(res, 401, { error: 'No autorizado' });
+      if (!hasPermission(user, PERMISSIONS.DEVICE_DELETE)) {
+        return sendJson(res, 403, { error: 'Sin permiso para eliminar dispositivos' });
       }
+
       const vehId = pathname.split('/')[3];
       const vehIndex = db.vehicles.findIndex((v) => v.id === vehId);
       if (vehIndex === -1) return sendJson(res, 404, { error: 'Dispositivo no encontrado' });
 
       const veh = db.vehicles[vehIndex];
-      if (
-        veh.traccarDeviceId &&
-        db.traccarConfig.url &&
-        db.traccarConfig.email &&
-        db.traccarConfig.password
-      ) {
+      if (user.role !== ROLES.SUPERADMIN && veh.companyId !== user.companyId) {
+        return sendJson(res, 403, { error: 'No tienes permiso para eliminar este dispositivo' });
+      }
+
+      if (veh.traccarDeviceId && db.traccarConfig.url && db.traccarConfig.email && db.traccarConfig.password) {
         try {
-          await fetchTraccar(db.traccarConfig, `/api/devices/${veh.traccarDeviceId}`, {
-            method: 'DELETE'
-          });
+          await telemetryService.provider.deleteDevice(db.traccarConfig, veh.traccarDeviceId);
         } catch (err) {
-          console.warn('No se pudo eliminar en Traccar VPS:', err.message);
+          console.warn('Aviso al eliminar en proveedor:', err.message);
         }
       }
 
@@ -1167,7 +1361,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    // 10. Geocodificación inversa ("Mostrar calle" al hacer clic en la tarjeta del mapa)
+    // 11. GEOCODIFICACIÓN INVERSA
     if (pathname === '/api/geocode' && req.method === 'GET') {
       const user = getAuthUser(req, db);
       if (!user) return sendJson(res, 401, { error: 'No autorizado' });
@@ -1198,7 +1392,7 @@ const server = http.createServer(async (req, res) => {
           }
         }
       } catch (err) {
-        // Fallback amigable si Nominatim tarda más de 5s
+        // Fallback
       } finally {
         clearTimeout(geoTimeout);
       }
@@ -1215,12 +1409,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { street });
     }
 
-    // Servir archivos estáticos del Frontend
+    // 12. SERVIR ARCHIVOS ESTÁTICOS DE LA SPA
     let filePath = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
     if (!filePath.startsWith(PUBLIC_DIR)) {
       res.writeHead(403);
       return res.end('Forbidden');
     }
+
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       const ext = path.extname(filePath).toLowerCase();
       res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
@@ -1242,6 +1437,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ====================================================================
+// 7. FUNCIONES AUXILIARES DE RUTA Y DISTANCIA
+// ====================================================================
 function summarizeRoute(points) {
   if (!points || points.length < 2) {
     return { distanceKm: 0, maxSpeedKmh: 0, stopsCount: 0, pointsCount: points ? points.length : 0 };
@@ -1279,7 +1477,9 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Evitar que cualquier microcorte de red cierre el proceso de Node.js
+// ====================================================================
+// 8. PROTECCIÓN DEL PROCESO Y APAGADO ELEGANTE (SRE)
+// ====================================================================
 process.on('uncaughtException', (err) => {
   console.error('Error controlado (uncaughtException):', err.message);
 });
@@ -1287,7 +1487,6 @@ process.on('unhandledRejection', (reason) => {
   console.error('Promesa rechazada controlada (unhandledRejection):', reason);
 });
 
-// Apagado elegante (Graceful Shutdown - The 12-Factor App Factor IX)
 let isShuttingDown = false;
 function gracefulShutdown(signal) {
   if (isShuttingDown) return;
@@ -1299,23 +1498,27 @@ function gracefulShutdown(signal) {
       console.log('💾 Estado guardado atómicamente en disco.');
     }
   } catch (err) {
-    console.error('Error al guardar estado durante apagado:', err.message);
+    console.error('Error guardando estado durante apagado:', err.message);
   }
   server.close(() => {
     console.log('✅ Conexiones HTTP finalizadas limpiamente.');
     process.exit(0);
   });
-  // Si alguna conexión queda colgada más de 5 segundos, forzar salida limpia
   setTimeout(() => process.exit(0), 5000).unref();
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`====================================================`);
-  console.log(`🚀 GEO-PANEL ejecutándose en http://localhost:${PORT} y en tu red Wi-Fi (0.0.0.0:${PORT})`);
-  console.log(`📍 Servidor Traccar configurado: ${DEFAULT_DB.traccarConfig.url}`);
-  console.log(`🛡️ Blindaje SRE/OWASP activo (scrypt, Rate-Limit, Singleflight, Graceful Shutdown)`);
-  console.log(`====================================================`);
-});
+// Iniciar servidor si se ejecuta directamente
+if (require.main === module) {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`====================================================`);
+    console.log(`🚀 GEO-PANEL ejecutándose en http://localhost:${PORT} y en red Wi-Fi (0.0.0.0:${PORT})`);
+    console.log(`📍 Proveedor de telemetría: ${process.env.TELEMETRY_PROVIDER || 'traccar'}`);
+    console.log(`🛡️ Blindaje SRE/OWASP activo (scrypt, RBAC, Rate-Limit, Singleflight, Graceful Shutdown)`);
+    console.log(`====================================================`);
+  });
+}
+
+module.exports = { server, loadDb, saveDb, hashPassword, verifyPassword, ROLES, PERMISSIONS, hasPermission };

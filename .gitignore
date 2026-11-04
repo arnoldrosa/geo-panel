@@ -1,4 +1,14 @@
 node_modules/
 data/db.json
+data/*.tmp
+data/*.bak
 .env
+.env.*
 *.log
+*.key
+*.pem
+backups/
+
+scripts/migration_data.sql
+subir-a-github.bat
+

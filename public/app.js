@@ -91,9 +91,9 @@ function setupForms() {
       document.getElementById('new-comp-admin-pass').value = '123456';
       await loadCompaniesAndAssignments();
       await loadLiveFleet(false);
-      alert('✅ Empresa y usuario cliente creados correctamente.');
+      showToast('Empresa y usuario cliente creados correctamente', 'success');
     } catch (err) {
-      alert('Error al crear empresa: ' + err.message);
+      showToast('Error al crear empresa: ' + err.message, 'error');
     }
   });
 
@@ -209,7 +209,13 @@ async function enterApp() {
 
   const badge = document.getElementById('header-role-badge');
   const isSuper = currentUser.role === 'SUPERADMIN';
-  badge.textContent = isSuper ? 'SUPER ADMIN' : 'CLIENTE EMPRESA';
+  const roleLabels = {
+    'SUPERADMIN': 'SUPER ADMIN',
+    'COMPANY_ADMIN': 'ADMIN EMPRESA',
+    'OPERATOR': 'OPERADOR',
+    'MOBILE_USER': 'DISPOSITIVO MÓVIL'
+  };
+  badge.textContent = roleLabels[currentUser.role] || currentUser.role || 'USUARIO';
   badge.className = isSuper
     ? 'text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
     : 'text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30';
@@ -555,6 +561,11 @@ function updateDeviceCard(vehicleId) {
   const pos = v.lastPosition || {};
   card.classList.remove('hidden');
 
+  // En pantallas móviles/pequeñas, contraer el panel flotante de lista para evitar superposición
+  if (window.innerWidth < 768) {
+    toggleFloatingPanel(false);
+  }
+
   document.getElementById('card-device-name').textContent = v.name;
   document.getElementById('card-device-company').textContent = v.companyName || 'Sin empresa';
 
@@ -735,8 +746,9 @@ async function deleteSelectedDevice() {
     closeDeviceCard();
     await loadCompaniesAndAssignments();
     await loadLiveFleet(false);
+    showToast(`Dispositivo "${v.name}" eliminado correctamente`, 'success');
   } catch (err) {
-    alert('No se pudo eliminar: ' + err.message);
+    showToast('No se pudo eliminar: ' + err.message, 'error');
   }
 }
 
@@ -799,7 +811,7 @@ async function loadVehicleHistory(hours) {
     document.getElementById('hist-maxspeed').textContent = `${data.summary.maxSpeedKmh} km/h`;
     document.getElementById('hist-stops').textContent = data.summary.stopsCount;
   } catch (err) {
-    alert('Error cargando historial: ' + err.message);
+    showToast('Error cargando historial: ' + err.message, 'error');
   }
 }
 
@@ -906,8 +918,9 @@ async function assignVehicleCompany(vehicleId, companyId) {
     });
     await loadCompaniesAndAssignments();
     await loadLiveFleet(false);
+    showToast('Vehículo asignado a empresa correctamente', 'success');
   } catch (err) {
-    alert('No se pudo asignar el vehículo: ' + err.message);
+    showToast('No se pudo asignar el vehículo: ' + err.message, 'error');
   }
 }
 
@@ -933,4 +946,54 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function showToast(message, type = 'info', duration = 4000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  const colors = {
+    success: 'bg-emerald-950/95 border-emerald-500 text-emerald-200',
+    error: 'bg-rose-950/95 border-rose-500 text-rose-200',
+    warning: 'bg-amber-950/95 border-amber-500 text-amber-200',
+    info: 'bg-slate-900/95 border-sky-500 text-sky-200'
+  };
+  const icons = {
+    success: '✅',
+    error: '❌',
+    warning: '⚠️',
+    info: 'ℹ️'
+  };
+
+  const colorClass = colors[type] || colors.info;
+  const icon = icons[type] || icons.info;
+
+  toast.className = `pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl border shadow-2xl backdrop-blur text-xs transition-all duration-300 transform translate-y-2 opacity-0 ${colorClass}`;
+  toast.innerHTML = `
+    <span class="text-base select-none">${icon}</span>
+    <div class="flex-1 leading-snug font-medium break-words">${escapeHtml(message)}</div>
+    <button type="button" class="text-slate-400 hover:text-white text-sm font-bold leading-none select-none ml-1">&times;</button>
+  `;
+
+  const closeBtn = toast.querySelector('button');
+  closeBtn.onclick = () => removeToast(toast);
+
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.remove('translate-y-2', 'opacity-0');
+  });
+
+  const timer = setTimeout(() => {
+    removeToast(toast);
+  }, duration);
+
+  function removeToast(el) {
+    clearTimeout(timer);
+    el.classList.add('opacity-0', 'scale-95');
+    setTimeout(() => {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 300);
+  }
 }
