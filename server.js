@@ -3,6 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+let telemetryRepository = null;
+try {
+  telemetryRepository = require('./db/telemetry-repository.js');
+} catch (_) {}
+
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -1140,6 +1145,46 @@ const server = http.createServer(async (req, res) => {
       dev.lastUpdate = nowIso;
       dev.traccarStatus = 'online';
 
+      // Persistencia durable en PostgreSQL (FASE 4)
+      if (telemetryRepository) {
+        try {
+          const pgRes = await telemetryRepository.recordTelemetry({
+            uniqueId: cleanUniqueId,
+            latitude: lat,
+            longitude: lon,
+            speedKmh: speed,
+            course: crs,
+            accuracy: acc,
+            batteryLevel: bat,
+            fixTime: effectiveFixTime,
+            deviceTime: fixTime || effectiveFixTime,
+            packetId: payload.packetId || null,
+            speedAnomaly,
+            timestampStatus
+          });
+
+          if (pgRes && pgRes.duplicate) {
+            return sendJson(res, 200, {
+              ok: true,
+              duplicate: true,
+              receivedAt: nowIso,
+              message: 'Posición idéntica recibida (descartada sin duplicar en PostgreSQL)'
+            });
+          }
+        } catch (pgErr) {
+          if (pgErr.statusCode === 403 || pgErr.statusCode === 404) {
+            return sendJson(res, pgErr.statusCode, { error: pgErr.message });
+          }
+          if (process.env.STRICT_PG_TELEMETRY === 'true') {
+            return sendJson(res, 503, {
+              ok: false,
+              retryable: true,
+              error: 'Motor de base de datos no disponible temporalmente. Reintente más tarde.'
+            });
+          }
+        }
+      }
+
       saveDb(db);
       return sendJson(res, 200, {
         ok: true,
@@ -1313,6 +1358,35 @@ const server = http.createServer(async (req, res) => {
 
       const toDate = new Date();
       const fromDate = new Date(toDate.getTime() - hours * 3600 * 1000);
+
+      // 1. Consultar historial persistido en PostgreSQL (FASE 5)
+      if (telemetryRepository) {
+        try {
+          const pgPositions = await telemetryRepository.getDeviceHistory({
+            deviceId: vehicle.id,
+            fromDate,
+            toDate,
+            companyId: user.role !== ROLES.SUPERADMIN ? user.companyId : null
+          });
+
+          if (Array.isArray(pgPositions) && pgPositions.length > 0) {
+            const points = pgPositions.map((p) => ({
+              latitude: p.latitude,
+              longitude: p.longitude,
+              speedKmh: p.speed_kmh,
+              fixTime: p.fix_time,
+              course: p.course,
+              batteryLevel: p.battery_level
+            }));
+            return sendJson(res, 200, {
+              source: 'geopanel_postgresql',
+              vehicleName: vehicle.name,
+              points,
+              summary: summarizeRoute(points)
+            });
+          }
+        } catch (_) {}
+      }
 
       // Si tiene TraccarDeviceId, consultar a través del adapter
       if (
@@ -1763,6 +1837,8 @@ function gracefulShutdown(signal) {
       saveDb(memoryDb);
       console.log('💾 Estado guardado atómicamente en disco.');
     }
+    const { closePool } = require('./db/pg.js');
+    closePool().catch(() => {});
   } catch (err) {
     console.error('Error guardando estado durante apagado:', err.message);
   }

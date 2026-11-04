@@ -355,7 +355,7 @@ async function runAllTests() {
     await test('14. Anti-avalanche: Posición idéntica en coordenadas y timestamp devuelve duplicate: true', async () => {
       const dev = loadDb().vehicles.find(v => v.uniqueId === 'DEMO-SCZ-01');
       const validToken = dev ? (dev.deviceToken || 'tok-demo-scz-01') : 'tok-demo-scz-01';
-      const exactTime = '2026-11-04T12:00:00.000Z';
+      const exactTime = new Date(Date.now() + 15000).toISOString();
 
       const payload = {
         uniqueId: 'DEMO-SCZ-01',

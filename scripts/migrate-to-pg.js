@@ -48,9 +48,10 @@ ON CONFLICT (legacy_id) DO UPDATE SET
       const companyLookup = u.companyId
         ? `(SELECT id FROM companies WHERE legacy_id = ${escapeSql(u.companyId)})`
         : 'NULL';
+      const userName = u.name || (u.email ? u.email.split('@')[0] : 'Usuario');
 
       sql += `INSERT INTO users (company_id, name, email, password_hash, role, phone, is_active, created_at)
-VALUES (${companyLookup}, ${escapeSql(u.name)}, ${escapeSql(u.email)}, ${escapeSql(u.password)}, ${escapeSql(u.role)}, ${escapeSql(u.phone)}, ${u.isActive !== false}, CURRENT_TIMESTAMP)
+VALUES (${companyLookup}, ${escapeSql(userName)}, ${escapeSql(u.email)}, ${escapeSql(u.password)}, ${escapeSql(u.role || 'OPERATOR')}, ${escapeSql(u.phone)}, ${u.isActive !== false}, CURRENT_TIMESTAMP)
 ON CONFLICT (email) DO UPDATE SET 
   name = EXCLUDED.name,
   password_hash = EXCLUDED.password_hash, 
