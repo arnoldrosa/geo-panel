@@ -981,6 +981,29 @@ const server = http.createServer(async (req, res) => {
     // 0. HEALTH CHECK (Coolify / Docker SRE)
     if ((pathname === '/api/health' || pathname === '/health') && req.method === 'GET') {
       const isTraccarEnabled = process.env.TRACCAR_ENABLED !== 'false';
+      let pgHealth = null;
+
+      if (process.env.STRICT_PG_TELEMETRY === 'true') {
+        try {
+          const pg = require('./db/pg.js');
+          pgHealth = await pg.checkHealth();
+          if (!pgHealth.available || !pgHealth.schemaReady) {
+            return sendJson(res, 503, {
+              status: 'error',
+              error: pgHealth.error || 'PostgreSQL telemétrico no disponible o esquema/PostGIS no verificado',
+              pgHealth,
+              uptimeSeconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000)
+            });
+          }
+        } catch (err) {
+          return sendJson(res, 503, {
+            status: 'error',
+            error: err.message,
+            uptimeSeconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000)
+          });
+        }
+      }
+
       return sendJson(res, 200, {
         status: 'ok',
         service: 'geo-panel',
@@ -989,6 +1012,7 @@ const server = http.createServer(async (req, res) => {
         traccarEnabled: isTraccarEnabled,
         traccarConnected: isTraccarEnabled && !!db.traccarConfig?.connected,
         telemetryProvider: process.env.TELEMETRY_PROVIDER || 'traccar',
+        pgHealth,
         lastSync: db.traccarConfig?.lastSync || null,
         timestamp: new Date().toISOString()
       });

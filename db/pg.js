@@ -86,6 +86,7 @@ async function withTransaction(callback) {
 
 /**
  * Inicializa e idempotentemente asegura el esquema PostgreSQL desde scripts/schema.sql
+ * Valida estrictamente la presencia de la extensión PostGIS y la tabla particionada 'positions'.
  */
 async function ensureSchema() {
   if (schemaInitialized) return true;
@@ -95,16 +96,36 @@ async function ensureSchema() {
     '/app/scripts/schema.sql'
   ];
   const schemaPath = candidatePaths.find((p) => fs.existsSync(p));
-  if (!schemaPath) return false;
+  if (!schemaPath) {
+    console.error('❌ Error crítico: No se encontró scripts/schema.sql en el sistema.');
+    schemaInitialized = false;
+    return false;
+  }
 
   try {
     const sql = fs.readFileSync(schemaPath, 'utf8');
     await query(sql);
+
+    // Verificación estricta: PostGIS y tabla positions
+    const verifyRes = await query(`
+      SELECT 
+        EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis') as has_postgis,
+        EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'positions') as has_positions
+    `);
+
+    const { has_postgis, has_positions } = verifyRes.rows[0] || {};
+    if (!has_postgis || !has_positions) {
+      console.error(`❌ Fallo de validación de esquema: has_postgis=${has_postgis}, has_positions=${has_positions}`);
+      schemaInitialized = false;
+      return false;
+    }
+
     schemaInitialized = true;
-    console.log('✅ Esquema PostgreSQL verificado e inicializado correctamente.');
+    console.log('✅ Esquema PostgreSQL y extensión PostGIS verificados e inicializados al 100%.');
     return true;
   } catch (err) {
-    console.error('Aviso inicializando esquema en PostgreSQL:', err.message);
+    console.error('❌ Error inicializando esquema en PostgreSQL:', err.message);
+    schemaInitialized = false;
     return false;
   }
 }
@@ -120,13 +141,20 @@ async function checkHealth() {
     isConnected = true;
 
     if (!schemaInitialized) {
-      await ensureSchema().catch(() => {});
+      const initialized = await ensureSchema();
+      if (!initialized) {
+        return {
+          available: false,
+          error: 'PostgreSQL activo pero el esquema o PostGIS no pudieron ser validados'
+        };
+      }
     }
 
     return {
       available: true,
       latencyMs,
-      version: res.rows[0].version
+      version: res.rows[0].version,
+      schemaReady: schemaInitialized
     };
   } catch (err) {
     isConnected = false;
