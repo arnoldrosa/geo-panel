@@ -14,9 +14,9 @@ try {
 } catch (_) {}
 
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const DB_TMP_FILE = path.join(DATA_DIR, 'db.json.tmp');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const DB_FILE = process.env.DB_FILE || process.env.DB_PATH || path.join(DATA_DIR, 'db.json');
+const DB_TMP_FILE = DB_FILE + '.tmp';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SERVER_START_TIME = Date.now();
 
