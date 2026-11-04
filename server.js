@@ -116,21 +116,21 @@ function verifyPassword(plainPassword, storedPassword) {
   return String(plainPassword) === String(storedPassword);
 }
 
-// Secreto de sesión: en producción exige clave obligatoria
+// Secreto de sesión: en producción y staging exige clave obligatoria
 function resolveTokenSecret() {
   const secret = process.env.TOKEN_SECRET;
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'staging' || process.env.APP_ENV === 'production';
   const DEV_FALLBACK = 'geopanel-dev-secret-key-scz-2026';
 
   if (isProd) {
     if (!secret || secret === DEV_FALLBACK) {
       console.error('❌ ERROR FATAL DE CONFIGURACIÓN (SRE/OWASP):');
-      console.error('   En entorno de producción (NODE_ENV=production) la variable TOKEN_SECRET es OBLIGATORIA');
+      console.error('   En entorno de producción o staging (NODE_ENV=production / APP_ENV=staging) la variable TOKEN_SECRET es OBLIGATORIA');
       console.error('   y no puede utilizar la clave predeterminada de desarrollo.');
       if (process.env.NODE_ENV_TEST !== 'true') {
         process.exit(1);
       }
-      throw new Error('TOKEN_SECRET obligatorio en producción');
+      throw new Error('TOKEN_SECRET obligatorio en producción y staging');
     }
     return secret;
   }
@@ -866,6 +866,9 @@ async function syncWithTraccar(db) {
 }
 
 function triggerTraccarSync(db, force = false) {
+  if (process.env.TRACCAR_ENABLED === 'false') {
+    return Promise.resolve({ synced: 0, connected: false, message: 'Traccar deshabilitado por configuración (TRACCAR_ENABLED=false)' });
+  }
   const cfg = db.traccarConfig;
   if (!cfg || !cfg.url || !cfg.email || !cfg.password) {
     return Promise.resolve({ synced: 0, connected: false, message: 'Sin credenciales configuradas' });
@@ -977,11 +980,14 @@ const server = http.createServer(async (req, res) => {
   try {
     // 0. HEALTH CHECK (Coolify / Docker SRE)
     if ((pathname === '/api/health' || pathname === '/health') && req.method === 'GET') {
+      const isTraccarEnabled = process.env.TRACCAR_ENABLED !== 'false';
       return sendJson(res, 200, {
         status: 'ok',
         service: 'geo-panel',
+        environment: process.env.APP_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
         uptimeSeconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000),
-        traccarConnected: !!db.traccarConfig?.connected,
+        traccarEnabled: isTraccarEnabled,
+        traccarConnected: isTraccarEnabled && !!db.traccarConfig?.connected,
         telemetryProvider: process.env.TELEMETRY_PROVIDER || 'traccar',
         lastSync: db.traccarConfig?.lastSync || null,
         timestamp: new Date().toISOString()
@@ -1496,8 +1502,8 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Sin permiso para consultar flota' });
       }
 
-      // Sincronizar en segundo plano respetando el cooldown
-      if (db.traccarConfig.url && db.traccarConfig.email && db.traccarConfig.password) {
+      // Sincronizar en segundo plano respetando el cooldown y TRACCAR_ENABLED
+      if (process.env.TRACCAR_ENABLED !== 'false' && db.traccarConfig.url && db.traccarConfig.email && db.traccarConfig.password) {
         try {
           await triggerTraccarSync(db, false);
         } catch (err) {
