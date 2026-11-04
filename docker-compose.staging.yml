@@ -59,6 +59,7 @@ services:
       - coolify
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
       # Enrutador HTTP -> Redirección automática a HTTPS
       - "traefik.http.routers.geopanel-staging-http.rule=Host(`staging-geo.187.127.33.214.sslip.io`)"
       - "traefik.http.routers.geopanel-staging-http.entrypoints=http"
