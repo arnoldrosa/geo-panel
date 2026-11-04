@@ -105,14 +105,49 @@ function verifyPassword(plainPassword, storedPassword) {
   return String(plainPassword) === String(storedPassword);
 }
 
-// Secreto de sesión: en producción exige o genera clave efímera segura
-const TOKEN_SECRET = process.env.TOKEN_SECRET || (() => {
-  if (process.env.NODE_ENV === 'production') {
-    console.warn('⚠️ AVISO DE SEGURIDAD: TOKEN_SECRET no definido en producción. Usando clave segura efímera.');
-    return crypto.randomBytes(32).toString('hex');
+// Secreto de sesión: en producción exige clave obligatoria
+function resolveTokenSecret() {
+  const secret = process.env.TOKEN_SECRET;
+  const isProd = process.env.NODE_ENV === 'production';
+  const DEV_FALLBACK = 'geopanel-dev-secret-key-scz-2026';
+
+  if (isProd) {
+    if (!secret || secret === DEV_FALLBACK) {
+      console.error('❌ ERROR FATAL DE CONFIGURACIÓN (SRE/OWASP):');
+      console.error('   En entorno de producción (NODE_ENV=production) la variable TOKEN_SECRET es OBLIGATORIA');
+      console.error('   y no puede utilizar la clave predeterminada de desarrollo.');
+      if (process.env.NODE_ENV_TEST !== 'true') {
+        process.exit(1);
+      }
+      throw new Error('TOKEN_SECRET obligatorio en producción');
+    }
+    return secret;
   }
-  return 'geopanel-dev-secret-key-scz-2026';
-})();
+  return secret || DEV_FALLBACK;
+}
+
+const TOKEN_SECRET = resolveTokenSecret();
+
+function hashDeviceToken(token) {
+  if (!token) return '';
+  return crypto.createHash('sha256').update(String(token).trim()).digest('hex');
+}
+
+function verifyDeviceToken(providedToken, storedTokenOrHash) {
+  if (!providedToken || !storedTokenOrHash) return false;
+  const clean = String(providedToken).trim();
+  const providedHash = crypto.createHash('sha256').update(clean).digest('hex');
+
+  // Si storedTokenOrHash es un hash SHA-256 (64 hex chars)
+  if (storedTokenOrHash.length === 64 && /^[0-9a-f]{64}$/i.test(storedTokenOrHash)) {
+    return crypto.timingSafeEqual(Buffer.from(providedHash, 'hex'), Buffer.from(storedTokenOrHash.toLowerCase(), 'hex'));
+  }
+  // Fallback para compatibilidad con tokens en texto plano previos
+  if (clean === storedTokenOrHash) {
+    return true;
+  }
+  return false;
+}
 
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000; // 7 días
 
@@ -246,35 +281,49 @@ const DEFAULT_DB = {
       createdAt: '2026-10-27T10:05:00Z'
     }
   ],
-  users: [
-    {
-      id: 'usr-admin',
-      name: 'Administrador General GEO-PANEL',
-      email: process.env.INITIAL_ADMIN_EMAIL || 'admin@geopanel.bo',
-      password: hashPassword(process.env.INITIAL_ADMIN_PASSWORD || 'admin123'),
-      role: ROLES.SUPERADMIN,
-      companyId: null,
-      isActive: true
-    },
-    {
-      id: 'usr-comp1',
-      name: 'Carlos Méndez (Transporte Oriental)',
-      email: 'oriental@empresa1.bo',
-      password: hashPassword('123456'),
-      role: ROLES.COMPANY_ADMIN,
-      companyId: 'comp-1',
-      isActive: true
-    },
-    {
-      id: 'usr-comp2',
-      name: 'Laura Suárez (Distribuidora SCZ)',
-      email: 'distribuidora@empresa2.bo',
-      password: hashPassword('123456'),
-      role: ROLES.COMPANY_ADMIN,
-      companyId: 'comp-2',
-      isActive: true
-    }
-  ],
+  users: process.env.NODE_ENV === 'production'
+    ? [
+        {
+          id: 'usr-admin',
+          name: 'Administrador General GEO-PANEL',
+          email: process.env.INITIAL_ADMIN_EMAIL || 'admin@geopanel.bo',
+          password: process.env.INITIAL_ADMIN_PASSWORD
+            ? hashPassword(process.env.INITIAL_ADMIN_PASSWORD)
+            : hashPassword(crypto.randomBytes(24).toString('hex')),
+          role: ROLES.SUPERADMIN,
+          companyId: null,
+          isActive: true
+        }
+      ]
+    : [
+        {
+          id: 'usr-admin',
+          name: 'Administrador General GEO-PANEL',
+          email: process.env.INITIAL_ADMIN_EMAIL || 'admin@geopanel.bo',
+          password: hashPassword(process.env.INITIAL_ADMIN_PASSWORD || 'admin123'),
+          role: ROLES.SUPERADMIN,
+          companyId: null,
+          isActive: true
+        },
+        {
+          id: 'usr-comp1',
+          name: 'Carlos Méndez (Transporte Oriental)',
+          email: 'oriental@empresa1.bo',
+          password: hashPassword('123456'),
+          role: ROLES.COMPANY_ADMIN,
+          companyId: 'comp-1',
+          isActive: true
+        },
+        {
+          id: 'usr-comp2',
+          name: 'Laura Suárez (Distribuidora SCZ)',
+          email: 'distribuidora@empresa2.bo',
+          password: hashPassword('123456'),
+          role: ROLES.COMPANY_ADMIN,
+          companyId: 'comp-2',
+          isActive: true
+        }
+      ],
   vehicles: [
     {
       id: 'veh-demo-1',
@@ -369,8 +418,10 @@ function ensureEncryptedUsers(db) {
   }
   if (Array.isArray(db.vehicles)) {
     for (const v of db.vehicles) {
-      if (!v.deviceToken) {
-        v.deviceToken = `tok-${String(v.uniqueId || v.id).toLowerCase()}`;
+      if (!v.deviceTokenHash) {
+        const rawToken = v.deviceToken || `tok-${String(v.uniqueId || v.id).toLowerCase()}`;
+        v.deviceTokenHash = hashDeviceToken(rawToken);
+        v.deviceToken = rawToken; // Conservar token de desarrollo si existe
         changed = true;
       }
     }
@@ -521,20 +572,111 @@ class TraccarTelemetryProvider extends BaseTelemetryProvider {
 }
 
 class NativeGpsEngineProvider extends BaseTelemetryProvider {
-  // Prototipo de proveedor nativo listo para Fase 4
-  async getDevices(config) { return []; }
-  async getPositions(config) { return []; }
-  async getHistory(config, deviceId, fromDate, toDate) { return []; }
-  async createDevice(config, payload) { return { id: Date.now(), ...payload }; }
-  async updateDevice(config, deviceId, payload) { return { id: deviceId, ...payload }; }
-  async deleteDevice(config, deviceId) { return { ok: true }; }
+  // Motor nativo GEO-PANEL: Lee de la persistencia de GEO-PANEL
+  async getDevices(config) {
+    const db = loadDb();
+    const now = Date.now();
+    return (db.vehicles || []).map((v) => {
+      const lastUp = v.lastUpdate ? new Date(v.lastUpdate).getTime() : 0;
+      const isOnline = lastUp && (now - lastUp < 10 * 60 * 1000);
+      return {
+        id: v.id,
+        name: v.name,
+        uniqueId: v.uniqueId,
+        status: isOnline ? 'online' : 'offline',
+        lastUpdate: v.lastUpdate || null,
+        phone: v.phone || null,
+        category: v.type || 'default',
+        disabled: !!v.disabled
+      };
+    });
+  }
+
+  async getPositions(config) {
+    const db = loadDb();
+    return (db.vehicles || [])
+      .filter((v) => v.lastPosition && v.lastPosition.latitude && v.lastPosition.longitude)
+      .map((v) => ({
+        id: v.id,
+        deviceId: v.id,
+        protocol: 'geopanel-native',
+        serverTime: v.lastUpdate,
+        deviceTime: v.lastPosition.fixTime,
+        fixTime: v.lastPosition.fixTime,
+        valid: true,
+        latitude: v.lastPosition.latitude,
+        longitude: v.lastPosition.longitude,
+        speed: v.lastPosition.speedKnots || 0,
+        course: v.lastPosition.course || 0,
+        address: v.lastPosition.address || null,
+        attributes: {
+          batteryLevel: v.lastPosition.batteryLevel,
+          speedKmh: v.lastPosition.speedKmh,
+          totalDistanceKm: v.lastPosition.totalDistanceKm
+        }
+      }));
+  }
+
+  async getHistory(config, deviceId, fromDate, toDate) {
+    const db = loadDb();
+    const veh = (db.vehicles || []).find((v) => v.id === deviceId || String(v.uniqueId) === String(deviceId));
+    if (!veh || !veh.lastPosition) return [];
+    return [{
+      deviceId: veh.id,
+      fixTime: veh.lastPosition.fixTime,
+      latitude: veh.lastPosition.latitude,
+      longitude: veh.lastPosition.longitude,
+      speed: veh.lastPosition.speedKnots || 0,
+      course: veh.lastPosition.course || 0,
+      attributes: {
+        speedKmh: veh.lastPosition.speedKmh,
+        batteryLevel: veh.lastPosition.batteryLevel
+      }
+    }];
+  }
+
+  async createDevice(config, payload) {
+    const db = loadDb();
+    const id = `veh-${Date.now()}`;
+    const newDev = { id, ...payload, isDemo: false, createdAt: new Date().toISOString() };
+    db.vehicles = db.vehicles || [];
+    db.vehicles.push(newDev);
+    saveDb(db);
+    return newDev;
+  }
+
+  async updateDevice(config, deviceId, payload) {
+    const db = loadDb();
+    const idx = (db.vehicles || []).findIndex((v) => v.id === deviceId);
+    if (idx !== -1) {
+      db.vehicles[idx] = { ...db.vehicles[idx], ...payload, id: deviceId };
+      saveDb(db);
+      return db.vehicles[idx];
+    }
+    return { id: deviceId, ...payload };
+  }
+
+  async deleteDevice(config, deviceId) {
+    const db = loadDb();
+    db.vehicles = (db.vehicles || []).filter((v) => v.id !== deviceId);
+    saveDb(db);
+    return { ok: true };
+  }
 }
 
 const telemetryService = {
   activeProvider: new TraccarTelemetryProvider(),
   nativeProvider: new NativeGpsEngineProvider(),
   get provider() {
-    return process.env.TELEMETRY_PROVIDER === 'native' ? this.nativeProvider : this.activeProvider;
+    if (process.env.TELEMETRY_PROVIDER === 'native') {
+      if (process.env.ALLOW_EXPERIMENTAL_NATIVE_ENGINE === 'true') {
+        return this.nativeProvider;
+      }
+      console.warn('⚠️ AVISO: Proveedor nativo solicitado pero ALLOW_EXPERIMENTAL_NATIVE_ENGINE no está activo.');
+      console.warn('   Manteniendo Traccar como proveedor protegido para evitar pérdida de posiciones.');
+      return this.activeProvider;
+    }
+    return this.activeProvider;
   }
 };
 
@@ -833,55 +975,179 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 1. INGESTA GPS DIRECTA (Tarea 4 & 5 - Separación de credenciales de dispositivos)
-    // No requiere sesión humana; valida token de dispositivo en cabecera o query
+    // 1. INGESTA GPS DIRECTA (Orden 002 & 003 - Motor Telemático Blindado)
     if ((pathname === '/api/v1/telemetry/report' || pathname === '/api/telemetry') && req.method === 'POST') {
-      const deviceToken = (req.headers['x-device-token'] || (req.headers['authorization'] || '').replace('Bearer ', '')).trim();
-      const payload = await parseBody(req);
+      const rawToken = (
+        req.headers['x-device-token'] ||
+        (req.headers['authorization'] || '').replace('Bearer ', '') ||
+        parsedUrl.searchParams.get('token') ||
+        ''
+      ).trim();
+
+      if (!rawToken) {
+        return sendJson(res, 401, { error: 'Token de autenticación de dispositivo requerido (cabecera X-Device-Token)' });
+      }
+
+      let payload;
+      try {
+        payload = await parseBody(req);
+      } catch (err) {
+        return sendJson(res, 400, { error: 'Cuerpo de petición malformado o JSON inválido' });
+      }
+
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return sendJson(res, 400, { error: 'Cuerpo de la petición debe ser un objeto JSON válido' });
+      }
+
       const { uniqueId, latitude, longitude, speedKmh, course, accuracy, batteryLevel, fixTime } = payload;
 
-      if (!uniqueId) {
-        return sendJson(res, 400, { error: 'uniqueId es obligatorio' });
+      if (!uniqueId || typeof uniqueId !== 'string' || !uniqueId.trim()) {
+        return sendJson(res, 400, { error: 'uniqueId es obligatorio y debe ser una cadena válida' });
       }
 
-      const lat = Number(latitude);
-      const lon = Number(longitude);
-      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-        return sendJson(res, 400, { error: 'Coordenadas geográficas inválidas' });
-      }
-
-      let dev = db.vehicles.find((v) => String(v.uniqueId) === String(uniqueId));
+      const cleanUniqueId = uniqueId.trim();
+      let dev = db.vehicles.find((v) => String(v.uniqueId) === cleanUniqueId);
       if (!dev) {
         return sendJson(res, 404, { error: 'Dispositivo no encontrado en GEO-PANEL' });
       }
 
-      // Validar token si el vehículo tiene token configurado
-      if (dev.deviceToken && deviceToken && dev.deviceToken !== deviceToken) {
+      // Verificación estricta de token con SHA-256 / timingSafeEqual
+      const storedToken = dev.deviceTokenHash || dev.deviceToken;
+      if (!storedToken || !verifyDeviceToken(rawToken, storedToken)) {
         return sendJson(res, 401, { error: 'Token de dispositivo no autorizado' });
       }
 
-      const nowIso = new Date().toISOString();
-      const speed = typeof speedKmh === 'number' ? +speedKmh.toFixed(2) : 0;
+      // Aislamiento y control de estado del dispositivo
+      if (dev.disabled === true || dev.isDisabled === true) {
+        return sendJson(res, 403, { error: 'Dispositivo deshabilitado o suspendido administrativamente' });
+      }
+
+      if (dev.expirationTime && new Date(dev.expirationTime).getTime() < Date.now()) {
+        return sendJson(res, 403, { error: 'Suscripción de monitoreo expirada para este dispositivo' });
+      }
+
+      // Validación estricta de coordenadas geográficas
+      if (
+        latitude === null ||
+        latitude === undefined ||
+        latitude === '' ||
+        longitude === null ||
+        longitude === undefined ||
+        longitude === '' ||
+        typeof latitude === 'boolean' ||
+        typeof longitude === 'boolean'
+      ) {
+        return sendJson(res, 400, { error: 'Latitud y longitud numéricas son obligatorias' });
+      }
+
+      const lat = Number(latitude);
+      const lon = Number(longitude);
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        lat < -90 ||
+        lat > 90 ||
+        lon < -180 ||
+        lon > 180
+      ) {
+        return sendJson(res, 400, { error: 'Coordenadas geográficas inválidas (latitud entre -90 y 90, longitud entre -180 y 180)' });
+      }
+
+      // Telemetría: velocidad, rumbo, precisión, batería
+      const rawSpeed = Number(speedKmh);
+      const speed = Number.isFinite(rawSpeed) && rawSpeed >= 0 ? +rawSpeed.toFixed(2) : 0;
+      // Clasificación de anomalía de velocidad (no rechazar automáticamente)
+      const speedAnomaly = speed > 200 ? 'excessive_speed_or_gps_jump' : null;
+
+      const rawCourse = Number(course);
+      const crs = Number.isFinite(rawCourse) && rawCourse >= 0 && rawCourse <= 360 ? +rawCourse.toFixed(1) : 0;
+
+      const rawAccuracy = Number(accuracy);
+      const acc = Number.isFinite(rawAccuracy) && rawAccuracy >= 0 ? +rawAccuracy.toFixed(1) : 5.0;
+
+      const rawBattery = Number(batteryLevel);
+      const bat = Number.isFinite(rawBattery) && rawBattery >= 0 && rawBattery <= 100
+        ? Math.round(rawBattery)
+        : (dev.lastPosition?.batteryLevel ?? null);
+
+      // Tratamiento de marcas de tiempo (futuras y antiguas)
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      let effectiveFixTime = nowIso;
+      let timestampStatus = 'valid';
+
+      if (fixTime) {
+        const fixDate = new Date(fixTime);
+        if (!isNaN(fixDate.getTime())) {
+          if (fixDate.getTime() > nowMs + 5 * 60 * 1000) {
+            timestampStatus = 'future_clamped_to_server_time';
+            effectiveFixTime = nowIso;
+          } else if (fixDate.getTime() < nowMs - 30 * 24 * 3600 * 1000) {
+            timestampStatus = 'historical_outdated_data';
+            effectiveFixTime = fixDate.toISOString();
+          } else {
+            effectiveFixTime = fixDate.toISOString();
+          }
+        }
+      }
+
+      // Detección de paquetes duplicados (Anti-avalanche)
+      if (dev.lastPosition) {
+        const isSameLat = Math.abs(lat - dev.lastPosition.latitude) < 0.000001;
+        const isSameLon = Math.abs(lon - dev.lastPosition.longitude) < 0.000001;
+        const isSameTime = dev.lastPosition.fixTime === effectiveFixTime;
+        if (isSameLat && isSameLon && isSameTime) {
+          return sendJson(res, 200, {
+            ok: true,
+            duplicate: true,
+            receivedAt: nowIso,
+            message: 'Posición idéntica recibida (descartada sin duplicar)'
+          });
+        }
+      }
+
+      // Calcular distancia incremental si se mueve
+      let totalDistance = dev.lastPosition?.totalDistanceKm || 0;
+      if (dev.lastPosition?.latitude && dev.lastPosition?.longitude) {
+        const deltaKm = haversineKm(
+          dev.lastPosition.latitude,
+          dev.lastPosition.longitude,
+          lat,
+          lon
+        );
+        if (deltaKm > 0.01 && deltaKm < 50) {
+          totalDistance = +(totalDistance + deltaKm).toFixed(2);
+        }
+      }
+
       dev.lastPosition = {
         latitude: lat,
         longitude: lon,
         speedKmh: speed,
         speedKnots: +(speed / 1.852).toFixed(2),
-        totalDistanceKm: dev.lastPosition?.totalDistanceKm || 0,
-        course: course || 0,
+        totalDistanceKm: totalDistance,
+        course: crs,
         status: 'online',
         ignition: speed > 1,
-        batteryLevel: typeof batteryLevel === 'number' ? Math.round(batteryLevel) : (dev.lastPosition?.batteryLevel ?? null),
-        accuracy: accuracy ? +Number(accuracy).toFixed(1) : 5.0,
+        batteryLevel: bat,
+        accuracy: acc,
         address: dev.lastPosition?.address || null,
         streetName: dev.lastPosition?.streetName || null,
-        fixTime: fixTime || nowIso
+        fixTime: effectiveFixTime,
+        speedAnomaly,
+        timestampStatus
       };
       dev.lastUpdate = nowIso;
       dev.traccarStatus = 'online';
 
       saveDb(db);
-      return sendJson(res, 200, { ok: true, receivedAt: nowIso });
+      return sendJson(res, 200, {
+        ok: true,
+        duplicate: false,
+        receivedAt: nowIso,
+        speedAnomaly,
+        timestampStatus
+      });
     }
 
     // 2. AUTENTICACIÓN HUMANA: LOGIN
@@ -1521,4 +1787,17 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, loadDb, saveDb, hashPassword, verifyPassword, ROLES, PERMISSIONS, hasPermission };
+module.exports = {
+  server,
+  loadDb,
+  saveDb,
+  hashPassword,
+  verifyPassword,
+  hashDeviceToken,
+  verifyDeviceToken,
+  resolveTokenSecret,
+  telemetryService,
+  ROLES,
+  PERMISSIONS,
+  hasPermission
+};

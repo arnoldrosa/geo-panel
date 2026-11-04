@@ -232,7 +232,7 @@
           <input id="vehicle-search" type="text" oninput="renderVehicleList()"
             placeholder="Buscar dispositivos..."
             class="flex-1 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500" />
-          <button onclick="openDeviceModal()" title="Añadir nuevo celular o GPS (+)"
+          <button id="btn-add-device" onclick="openDeviceModal()" title="Añadir nuevo celular o GPS (+)"
             class="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-base flex items-center justify-center shadow shrink-0 transition">
             +
           </button>
@@ -359,11 +359,11 @@
             class="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition">
             📲 QR
           </button>
-          <button onclick="openDeviceModal(selectedVehicleId)" title="Editar Dispositivo"
+          <button id="card-btn-edit" onclick="openDeviceModal(selectedVehicleId)" title="Editar Dispositivo"
             class="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-amber-600/30 border border-slate-700 text-xs font-semibold text-amber-300 transition">
             ✏️
           </button>
-          <button onclick="deleteSelectedDevice()" title="Eliminar Dispositivo"
+          <button id="card-btn-delete" onclick="deleteSelectedDevice()" title="Eliminar Dispositivo"
             class="py-1.5 px-2.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-800/60 text-xs font-semibold text-rose-300 transition">
             🗑️
           </button>

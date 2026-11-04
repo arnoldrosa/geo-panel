@@ -10,6 +10,7 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 -- 1. Tabla de Empresas (Tenants)
 CREATE TABLE IF NOT EXISTS companies (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    legacy_id VARCHAR(50) UNIQUE, -- Identificador de migración (ej. 'comp-1')
     name VARCHAR(150) NOT NULL,
     tax_id VARCHAR(50), -- NIT / RUT
     phone VARCHAR(50),
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS companies (
 -- 2. Tabla de Usuarios (RBAC Granular)
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
+    company_id UUID REFERENCES companies(id) ON DELETE RESTRICT,
     name VARCHAR(120) NOT NULL,
     email VARCHAR(150) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS devices (
     device_type VARCHAR(30) NOT NULL DEFAULT 'person' CHECK (device_type IN ('person', 'car', 'truck', 'van', 'motorcycle', 'default')),
     phone VARCHAR(50),
     traccar_device_id INT, -- Mapeo temporal mientras coexista con Traccar
-    device_token_hash VARCHAR(255), -- Token criptográfico para transmisión GPS directa
+    device_token_hash VARCHAR(255), -- Hash criptográfico SHA-256 para transmisión GPS directa
     is_disabled BOOLEAN NOT NULL DEFAULT false,
     is_demo BOOLEAN NOT NULL DEFAULT false,
     expiration_time TIMESTAMPTZ,
@@ -55,10 +56,10 @@ CREATE TABLE IF NOT EXISTS devices (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 4. Tabla de Posiciones y Telemetría
+-- 4. Tabla de Posiciones y Telemetría (HISTORIAL PROTEGIDO - NUNCA CASCADE)
 CREATE TABLE IF NOT EXISTS positions (
     id BIGSERIAL,
-    device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL REFERENCES devices(id) ON DELETE RESTRICT,
     fix_time TIMESTAMPTZ NOT NULL,
     server_time TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     geom GEOMETRY(Point, 4326) NOT NULL,

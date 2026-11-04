@@ -224,6 +224,15 @@ async function enterApp() {
   document.getElementById('tab-btn-traccar').classList.toggle('hidden', !isSuper);
   document.getElementById('superadmin-company-filter-box').classList.toggle('hidden', !isSuper);
 
+  // Control granular de acciones de gestión de dispositivos según rol
+  const canManage = isSuper || currentUser.role === 'COMPANY_ADMIN';
+  const addBtn = document.getElementById('btn-add-device');
+  if (addBtn) addBtn.classList.toggle('hidden', !canManage);
+  const editBtn = document.getElementById('card-btn-edit');
+  if (editBtn) editBtn.classList.toggle('hidden', !canManage);
+  const delBtn = document.getElementById('card-btn-delete');
+  if (delBtn) delBtn.classList.toggle('hidden', !canManage);
+
   switchTab('map');
   initMapIfNeeded();
 
