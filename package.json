@@ -8,6 +8,7 @@
     "dev": "node --watch server.js",
     "test": "node tests/test-suite.js",
     "test:pg": "node tests/pg-integration-suite.js",
+    "test:mobile": "node tests/mobile-distribution-suite.js",
     "backup": "node scripts/backup.js",
     "migrate:pg": "node scripts/migrate-to-pg.js"
   },

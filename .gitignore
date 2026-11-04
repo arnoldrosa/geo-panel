@@ -2,6 +2,8 @@ node_modules/
 data/db.json
 data/*.tmp
 data/*.bak
+data/releases/
+*.apk
 .env
 .env.*
 *.log

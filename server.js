@@ -8,6 +8,11 @@ try {
   telemetryRepository = require('./db/telemetry-repository.js');
 } catch (_) {}
 
+let releaseManager = null;
+try {
+  releaseManager = require('./db/releases.js');
+} catch (_) {}
+
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -48,7 +53,8 @@ const PERMISSIONS = {
   TELEMETRY_CONFIG: 'telemetry:config',
   TELEMETRY_TRANSMIT: 'telemetry:transmit',
   REPORT_READ: 'report:read',
-  QR_GENERATE: 'qr:generate'
+  QR_GENERATE: 'qr:generate',
+  MOBILE_MANAGE: 'mobile:manage'
 };
 
 const ROLE_PERMISSIONS = {
@@ -925,12 +931,14 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-function parseBody(req) {
+function parseBody(req, maxBytes = 60 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
-      if (body.length > 1e6) req.destroy();
+      if (body.length > maxBytes) {
+        req.destroy(new Error(`Payload excede el límite máximo de ${Math.round(maxBytes / (1024 * 1024))}MB`));
+      }
     });
     req.on('end', () => {
       if (!body) return resolve({});
@@ -1253,6 +1261,191 @@ const server = http.createServer(async (req, res) => {
           companyName: company ? company.name : 'Administración Central GEO-PANEL'
         }
       });
+    }
+
+    // ====================================================================
+    // MÓDULO DE DISTRIBUCIÓN Y ACTUALIZACIONES DE GEO-PANEL MOBILE (OT-005)
+    // ====================================================================
+
+    // Ruta de acceso amigable y directo al Centro de Descargas
+    if ((pathname === '/downloads' || pathname === '/descargas' || pathname === '/mobile') && req.method === 'GET') {
+      res.writeHead(302, { Location: '/?tab=mobile' });
+      return res.end();
+    }
+
+    // 3.1 Comprobar actualizaciones desde la aplicación Android (Requisito 3)
+    if (pathname === '/api/v1/mobile/updates/check' && req.method === 'GET') {
+      if (!releaseManager) {
+        return sendJson(res, 503, { error: 'Módulo de releases no disponible' });
+      }
+
+      const clientVersionCode = parseInt(parsedUrl.searchParams.get('versionCode') || '0', 10);
+      const latest = await releaseManager.getLatestRelease();
+
+      if (!latest) {
+        return sendJson(res, 200, {
+          hasUpdate: false,
+          currentVersionCode: clientVersionCode,
+          message: 'No hay versiones publicadas disponibles en este momento.'
+        });
+      }
+
+      const hasUpdate = latest.versionCode > clientVersionCode;
+      const host = req.headers.host || 'localhost:3000';
+      const protocol = req.headers['x-forwarded-proto'] || 'http';
+      const baseUrl = `${protocol}://${host}`;
+
+      return sendJson(res, 200, {
+        hasUpdate,
+        currentVersionCode: clientVersionCode,
+        latestVersion: hasUpdate
+          ? {
+              versionCode: latest.versionCode,
+              versionName: latest.versionName,
+              releaseDate: latest.releaseDate,
+              releaseNotes: latest.releaseNotes,
+              fileSize: latest.fileSize,
+              sha256: latest.sha256,
+              minSdk: latest.minSdk,
+              minAndroidVersion: latest.minAndroidVersion,
+              isMandatory: latest.isMandatory,
+              downloadUrl: `${baseUrl}/api/v1/mobile/download/${latest.versionCode}`
+            }
+          : null
+      });
+    }
+
+    // 3.2 Descarga directa de APK de GEO-PANEL Mobile (Requisito 2 & 4)
+    if (pathname.startsWith('/api/v1/mobile/download') && req.method === 'GET') {
+      if (!releaseManager) {
+        return sendJson(res, 503, { error: 'Módulo de descargas no disponible' });
+      }
+
+      const parts = pathname.split('/').filter(Boolean);
+      // partes: ['api', 'v1', 'mobile', 'download', 'latest' o '1']
+      const versionTarget = parts[4] || 'latest';
+
+      const release = versionTarget === 'latest'
+        ? await releaseManager.getLatestRelease()
+        : await releaseManager.getReleaseByVersion(versionTarget);
+
+      if (!release || !release.isPublished) {
+        return sendJson(res, 404, { error: 'Versión de aplicación no encontrada o no publicada' });
+      }
+
+      const filePath = releaseManager.getApkPath(release.fileName);
+      if (!fs.existsSync(filePath)) {
+        return sendJson(res, 404, {
+          error: 'El archivo APK no se encuentra en el volumen persistente del servidor.'
+        });
+      }
+
+      await releaseManager.incrementDownloadCount(release.versionCode);
+      const stat = fs.statSync(filePath);
+
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.android.package-archive',
+        'Content-Disposition': `attachment; filename="${release.fileName}"`,
+        'Content-Length': stat.size,
+        'X-Checksum-Sha256': release.sha256,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'public, max-age=3600'
+      });
+
+      return fs.createReadStream(filePath).pipe(res);
+    }
+
+    // 3.3 Listado público de versiones e historial de cambios
+    if (pathname === '/api/v1/mobile/versions' && req.method === 'GET') {
+      if (!releaseManager) {
+        return sendJson(res, 503, { error: 'Módulo de releases no disponible' });
+      }
+      const releases = await releaseManager.listReleases(false);
+      const latest = await releaseManager.getLatestRelease();
+      return sendJson(res, 200, {
+        latestVersion: latest,
+        versions: releases
+      });
+    }
+
+    // 3.4 Administración de Releases: Listado completo (Solo SUPERADMIN - Requisito 5)
+    if (pathname === '/api/v1/admin/mobile/releases' && req.method === 'GET') {
+      const user = getAuthUser(req, db);
+      if (!user || user.role !== ROLES.SUPERADMIN) {
+        return sendJson(res, 403, { error: 'Acceso restringido a administradores' });
+      }
+
+      if (!releaseManager) {
+        return sendJson(res, 503, { error: 'Módulo de releases no disponible' });
+      }
+
+      const releases = await releaseManager.listReleases(true);
+      return sendJson(res, 200, { releases });
+    }
+
+    // 3.5 Administración de Releases: Publicar nuevo APK (Solo SUPERADMIN - Requisito 5)
+    if (pathname === '/api/v1/admin/mobile/releases' && req.method === 'POST') {
+      const user = getAuthUser(req, db);
+      if (!user || user.role !== ROLES.SUPERADMIN) {
+        return sendJson(res, 403, { error: 'Acceso restringido a administradores' });
+      }
+
+      if (!releaseManager) {
+        return sendJson(res, 503, { error: 'Módulo de releases no disponible' });
+      }
+
+      const body = await parseBody(req);
+      const { versionCode, versionName, releaseNotes, minSdk, isMandatory, apkBase64 } = body;
+
+      if (!apkBase64) {
+        return sendJson(res, 400, { error: 'El archivo APK en formato base64 es obligatorio' });
+      }
+
+      try {
+        const fileBuffer = Buffer.from(apkBase64, 'base64');
+        const release = await releaseManager.publishRelease(
+          { versionCode, versionName, releaseNotes, minSdk, isMandatory },
+          fileBuffer,
+          user.email
+        );
+
+        return sendJson(res, 201, {
+          ok: true,
+          message: `Versión v${release.versionName} registrada y publicada con éxito.`,
+          release
+        });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+
+    // 3.6 Administración de Releases: Cambiar estado de publicación (Solo SUPERADMIN)
+    if (pathname.startsWith('/api/v1/admin/mobile/releases/') && pathname.endsWith('/status') && req.method === 'PUT') {
+      const user = getAuthUser(req, db);
+      if (!user || user.role !== ROLES.SUPERADMIN) {
+        return sendJson(res, 403, { error: 'Acceso restringido a administradores' });
+      }
+
+      if (!releaseManager) {
+        return sendJson(res, 503, { error: 'Módulo de releases no disponible' });
+      }
+
+      const parts = pathname.split('/').filter(Boolean);
+      // partes: ['api', 'v1', 'admin', 'mobile', 'releases', '1', 'status']
+      const targetVersionCode = parts[5];
+      const body = await parseBody(req);
+      const { isPublished } = body;
+
+      try {
+        const updated = await releaseManager.setPublishStatus(targetVersionCode, isPublished);
+        return sendJson(res, 200, {
+          ok: true,
+          message: `Estado de versión ${updated.versionName} actualizado a: ${isPublished ? 'Publicado' : 'Retirado'}`,
+          release: updated
+        });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
     }
 
     // 4. CONFIGURACIÓN DEL PROVEEDOR TELEMETRÍA (Solo SUPERADMIN)

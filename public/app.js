@@ -11,8 +11,16 @@ let refreshInterval = null;
 
 window.addEventListener('DOMContentLoaded', () => {
   setupForms();
+  setupMobileAdminForm();
+
+  const params = new URLSearchParams(window.location.search);
+  const hash = window.location.hash;
+  const isMobileRequested = params.get('tab') === 'mobile' || hash === '#mobile' || hash === '#downloads';
+
   if (authToken) {
     verifySession();
+  } else if (isMobileRequested) {
+    showPublicDownloads();
   }
 });
 
@@ -224,6 +232,12 @@ async function enterApp() {
   document.getElementById('tab-btn-traccar').classList.toggle('hidden', !isSuper);
   document.getElementById('superadmin-company-filter-box').classList.toggle('hidden', !isSuper);
 
+  const publicHeader = document.getElementById('public-download-header');
+  if (publicHeader) publicHeader.classList.add('hidden');
+
+  const mobileAdminPanel = document.getElementById('mobile-admin-panel');
+  if (mobileAdminPanel) mobileAdminPanel.classList.toggle('hidden', !isSuper);
+
   // Control granular de acciones de gestión de dispositivos según rol
   const canManage = isSuper || currentUser.role === 'COMPANY_ADMIN';
   const addBtn = document.getElementById('btn-add-device');
@@ -233,7 +247,12 @@ async function enterApp() {
   const delBtn = document.getElementById('card-btn-delete');
   if (delBtn) delBtn.classList.toggle('hidden', !canManage);
 
-  switchTab('map');
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tab') === 'mobile' || window.location.hash === '#mobile') {
+    switchTab('mobile');
+  } else {
+    switchTab('map');
+  }
   initMapIfNeeded();
 
   await loadTraccarConfig();
@@ -282,7 +301,7 @@ function toggleFloatingPanel(show) {
 }
 
 function switchTab(tabName) {
-  const tabs = ['map', 'companies', 'traccar'];
+  const tabs = ['map', 'companies', 'traccar', 'mobile'];
   for (const t of tabs) {
     const el = document.getElementById(`tab-${t}`);
     const btn = document.getElementById(`tab-btn-${t}`);
@@ -299,6 +318,9 @@ function switchTab(tabName) {
   }
   if (tabName === 'companies') {
     loadCompaniesAndAssignments();
+  }
+  if (tabName === 'mobile') {
+    loadMobileDownloadCenter();
   }
 }
 
@@ -1005,4 +1027,358 @@ function showToast(message, type = 'info', duration = 4000) {
       if (el.parentNode) el.parentNode.removeChild(el);
     }, 300);
   }
+}
+
+// ====================================================================
+// MÓDULO WEB: APLICACIONES Y DESCARGAS / GEO-PANEL MOBILE (OT-005-A)
+// ====================================================================
+
+function showPublicDownloads() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-shell').classList.remove('hidden');
+
+  const publicHeader = document.getElementById('public-download-header');
+  if (publicHeader) publicHeader.classList.remove('hidden');
+
+  // Ocultar pestañas operativas y filtros privados para visitantes anónimos
+  document.getElementById('tab-btn-map').classList.add('hidden');
+  document.getElementById('tab-btn-companies').classList.add('hidden');
+  document.getElementById('tab-btn-traccar').classList.add('hidden');
+  const superFilter = document.getElementById('superadmin-company-filter-box');
+  if (superFilter) superFilter.classList.add('hidden');
+  const adminPanel = document.getElementById('mobile-admin-panel');
+  if (adminPanel) adminPanel.classList.add('hidden');
+
+  switchTab('mobile');
+}
+
+function backToLoginFromDownloads() {
+  if (currentUser) {
+    switchTab('map');
+  } else {
+    document.getElementById('app-shell').classList.add('hidden');
+    document.getElementById('login-screen').classList.remove('hidden');
+    const publicHeader = document.getElementById('public-download-header');
+    if (publicHeader) publicHeader.classList.add('hidden');
+  }
+}
+
+async function loadMobileDownloadCenter() {
+  // 1. Detección automática del sistema operativo del visitante
+  detectClientPlatform();
+
+  // 2. Consulta de versiones públicas vigentes
+  try {
+    const res = await fetch('/api/v1/mobile/versions');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const latest = data.latestVersion;
+    const versions = data.versions || [];
+
+    renderLatestReleaseCard(latest);
+    renderVersionsChangelog(versions);
+  } catch (err) {
+    console.warn('Error obteniendo releases:', err.message);
+    renderLatestReleaseCard(null);
+  }
+
+  // 3. Si el usuario logueado es SuperAdmin, cargar el inventario administrativo
+  if (currentUser && currentUser.role === 'SUPERADMIN') {
+    await loadAdminMobileReleases();
+  }
+}
+
+function detectClientPlatform() {
+  const ua = (navigator.userAgent || '').toLowerCase();
+  const osLabel = document.getElementById('detected-os-label');
+  const osTip = document.getElementById('detected-os-tip');
+  const btnTitle = document.getElementById('btn-download-title');
+
+  if (/android/i.test(ua)) {
+    if (osLabel) osLabel.innerHTML = '<span>🤖</span> <span>Dispositivo Android detectado</span>';
+    if (osTip) osTip.textContent = 'Compatible al 100%. Pulsa el botón inferior para descargar e instalar directamente.';
+    if (btnTitle) btnTitle.textContent = 'Descargar APK Directo para este Android';
+  } else if (/iphone|ipad|ipod/i.test(ua)) {
+    if (osLabel) osLabel.innerHTML = '<span>🍎</span> <span>Apple iOS detectado</span>';
+    if (osTip) osTip.textContent = 'GEO-PANEL Mobile está disponible para Android. Abre este portal desde tu celular Android.';
+    if (btnTitle) btnTitle.textContent = 'Descargar APK (Requiere Android 8.0+)';
+  } else {
+    if (osLabel) osLabel.innerHTML = '<span>💻</span> <span>Computadora de Escritorio</span>';
+    if (osTip) osTip.textContent = 'Escanea el código QR con la cámara de tu celular para descargarlo de inmediato.';
+    if (btnTitle) btnTitle.textContent = 'Descargar APK en este Equipo';
+  }
+}
+
+let currentReleaseSha256 = '';
+
+function renderLatestReleaseCard(latest) {
+  const badge = document.getElementById('mobile-status-badge');
+  const btnDownload = document.getElementById('btn-download-apk');
+  const comingSoon = document.getElementById('mobile-coming-soon-banner');
+  const qrCanvas = document.getElementById('mobile-download-qr-canvas');
+  const qrUrlText = document.getElementById('mobile-qr-url-text');
+
+  if (!latest) {
+    // Si todavía no existe un APK firmado y validado en el servidor (Misión 1)
+    if (badge) {
+      badge.textContent = '🟡 Próximamente';
+      badge.className = 'px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40';
+    }
+    if (btnDownload) btnDownload.classList.add('hidden');
+    if (comingSoon) comingSoon.classList.remove('hidden');
+    if (qrCanvas) qrCanvas.innerHTML = '<div class="text-[11px] text-slate-500 p-6">Código QR disponible al publicar APK</div>';
+    if (qrUrlText) qrUrlText.textContent = 'No hay paquete publicado';
+    currentReleaseSha256 = '';
+    return;
+  }
+
+  if (badge) {
+    badge.textContent = '🟢 Versión Oficial Verificada';
+    badge.className = 'px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+  }
+  if (btnDownload) btnDownload.classList.remove('hidden');
+  if (comingSoon) comingSoon.classList.add('hidden');
+
+  const vNameEl = document.getElementById('mobile-version-name');
+  if (vNameEl) vNameEl.textContent = `v${latest.versionName} (Build ${latest.versionCode})`;
+
+  const dateEl = document.getElementById('mobile-release-date');
+  if (dateEl) {
+    try {
+      const d = new Date(latest.releaseDate);
+      dateEl.textContent = d.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+    } catch (_) {
+      dateEl.textContent = latest.releaseDate || 'Reciente';
+    }
+  }
+
+  const sizeEl = document.getElementById('mobile-file-size');
+  if (sizeEl) {
+    const mb = (latest.fileSize / (1024 * 1024)).toFixed(1);
+    sizeEl.textContent = `~${mb} MB`;
+  }
+
+  const minSdkEl = document.getElementById('mobile-min-sdk');
+  if (minSdkEl) {
+    minSdkEl.textContent = latest.minAndroidVersion || 'Android 8.0+';
+  }
+
+  const shaEl = document.getElementById('mobile-sha256-text');
+  currentReleaseSha256 = latest.sha256 || '';
+  if (shaEl) shaEl.textContent = currentReleaseSha256;
+
+  // Actualizar enlace directo
+  const downloadUrl = `${window.location.origin}/api/v1/mobile/download/latest`;
+  if (btnDownload) {
+    btnDownload.href = downloadUrl;
+    btnDownload.setAttribute('download', latest.fileName || `geopanel-v${latest.versionName}.apk`);
+  }
+  if (qrUrlText) qrUrlText.textContent = downloadUrl;
+
+  // Generar Código QR interactivo
+  if (qrCanvas && window.QRCode) {
+    qrCanvas.innerHTML = '';
+    new QRCode(qrCanvas, {
+      text: downloadUrl,
+      width: 140,
+      height: 140,
+      colorDark: '#090d16',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  }
+}
+
+function copyReleaseSha256() {
+  if (!currentReleaseSha256) {
+    showToast('No hay hash SHA-256 disponible para copiar', 'warning');
+    return;
+  }
+  navigator.clipboard.writeText(currentReleaseSha256)
+    .then(() => {
+      const btn = document.getElementById('btn-copy-sha256');
+      if (btn) {
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '✅ ¡Copiado!';
+        setTimeout(() => { btn.innerHTML = originalText; }, 2500);
+      }
+      showToast('Checksum SHA-256 copiado al portapapeles', 'success');
+    })
+    .catch((err) => {
+      showToast('Error al copiar al portapapeles: ' + err.message, 'error');
+    });
+}
+
+function renderVersionsChangelog(versions) {
+  const container = document.getElementById('mobile-versions-list');
+  if (!container) return;
+
+  if (!versions || versions.length === 0) {
+    container.innerHTML = '<div class="text-xs text-slate-500 py-3 text-center">No hay versiones registradas aún.</div>';
+    return;
+  }
+
+  container.innerHTML = versions.map((v) => {
+    const mb = (v.fileSize / (1024 * 1024)).toFixed(1);
+    let dateStr = v.releaseDate;
+    try {
+      dateStr = new Date(v.releaseDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch (_) {}
+
+    return `
+      <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-2 hover:border-slate-700 transition">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold text-white bg-slate-800 px-2.5 py-1 rounded-lg">v${escapeHtml(v.versionName)}</span>
+            <span class="text-[11px] text-slate-400">Build ${v.versionCode}</span>
+            <span class="text-[11px] text-slate-500">· ${dateStr}</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-[11px] text-slate-400">📦 ${mb} MB</span>
+            <span class="text-[11px] text-emerald-400">⬇️ ${v.downloadsCount || 0} descargas</span>
+            <a href="/api/v1/mobile/download/${v.versionCode}" download class="text-[11px] font-semibold text-sky-400 hover:text-sky-300">
+              Descargar →
+            </a>
+          </div>
+        </div>
+        <p class="text-xs text-slate-300 leading-relaxed">${escapeHtml(v.releaseNotes || 'Mejoras de rendimiento y estabilidad.')}</p>
+        <div class="text-[10px] text-slate-500 font-mono truncate">
+          SHA-256: <span class="text-slate-400 select-all">${v.sha256}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function loadAdminMobileReleases() {
+  const tbody = document.getElementById('admin-releases-table-body');
+  if (!tbody) return;
+
+  try {
+    const res = await apiFetch('/api/v1/admin/mobile/releases');
+    const releases = res.releases || [];
+
+    if (releases.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-slate-500">No hay releases registradas en el servidor.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = releases.map((r) => {
+      const mb = (r.fileSize / (1024 * 1024)).toFixed(1);
+      const isPublished = !!r.isPublished;
+      const statusBadge = isPublished
+        ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Publicado</span>'
+        : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">Retirado</span>';
+
+      const actionBtn = isPublished
+        ? `<button onclick="toggleReleaseStatus(${r.versionCode}, true)" class="px-2.5 py-1 rounded bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold transition">Retirar</button>`
+        : `<button onclick="toggleReleaseStatus(${r.versionCode}, false)" class="px-2.5 py-1 rounded bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-800 text-emerald-300 text-[10px] font-semibold transition">Publicar</button>`;
+
+      return `
+        <tr class="hover:bg-slate-900/60 transition">
+          <td class="py-2.5 px-3 font-mono text-slate-300 font-bold">${r.versionCode}</td>
+          <td class="py-2.5 px-3 font-bold text-white">v${escapeHtml(r.versionName)}</td>
+          <td class="py-2.5 px-3 text-slate-400">${mb} MB</td>
+          <td class="py-2.5 px-3 font-mono text-[10px] text-slate-500 max-w-[120px] truncate" title="${r.sha256}">${r.sha256 ? r.sha256.substring(0, 12) + '...' : '--'}</td>
+          <td class="py-2.5 px-3 text-slate-300 font-semibold">${r.downloadsCount || 0}</td>
+          <td class="py-2.5 px-3 text-slate-400 text-[11px]">${escapeHtml(r.publishedBy || 'admin')}</td>
+          <td class="py-2.5 px-3">${statusBadge}</td>
+          <td class="py-2.5 px-3 text-right space-x-1">
+            ${actionBtn}
+            <a href="/api/v1/mobile/download/${r.versionCode}" download class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-[10px] font-semibold transition inline-block">⬇️</a>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Error cargando inventario admin de releases:', err);
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-rose-400">Error: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function toggleReleaseStatus(versionCode, currentPublishedState) {
+  try {
+    const res = await apiFetch(`/api/v1/admin/mobile/releases/${versionCode}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ isPublished: !currentPublishedState })
+    });
+    showToast(res.message || 'Estado actualizado', 'success');
+    await loadMobileDownloadCenter();
+  } catch (err) {
+    showToast('Error al modificar estado: ' + err.message, 'error');
+  }
+}
+
+function setupMobileAdminForm() {
+  const form = document.getElementById('admin-publish-release-form');
+  if (!form) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btn-submit-publish-release');
+    const feedback = document.getElementById('admin-release-feedback');
+    const fileInput = document.getElementById('admin-apk-file-input');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+      showToast('Selecciona un archivo APK para continuar', 'warning');
+      return;
+    }
+
+    const file = fileInput.files[0];
+    if (!file.name.toLowerCase().endsWith('.apk')) {
+      showToast('El archivo debe tener extensión .apk', 'error');
+      return;
+    }
+
+    if (file.size > 60 * 1024 * 1024) {
+      showToast('El archivo supera el límite de 60 MB', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span> <span>Validando y procesando APK...</span>';
+    feedback.className = 'hidden';
+
+    try {
+      const base64Data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result;
+          // Quitar encabezado data:application/...;base64,
+          const base64 = result.split(',')[1];
+          resolve(base64);
+        };
+        reader.onerror = () => reject(new Error('Error leyendo archivo en disco'));
+        reader.readAsDataURL(file);
+      });
+
+      const payload = {
+        versionCode: parseInt(document.getElementById('admin-rel-code').value, 10),
+        versionName: document.getElementById('admin-rel-name').value.trim(),
+        minSdk: parseInt(document.getElementById('admin-rel-minsdk').value, 10) || 26,
+        releaseNotes: document.getElementById('admin-rel-notes').value.trim(),
+        isMandatory: document.getElementById('admin-rel-mandatory').checked,
+        apkBase64: base64Data
+      };
+
+      const res = await apiFetch('/api/v1/admin/mobile/releases', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      feedback.className = 'rounded-xl p-3 text-xs bg-emerald-950/70 border border-emerald-700 text-emerald-200';
+      feedback.innerHTML = `<strong>✅ Éxito:</strong> ${escapeHtml(res.message)} · SHA-256: <code>${res.release.sha256.substring(0, 16)}...</code>`;
+
+      form.reset();
+      showToast('Versión APK registrada y publicada', 'success');
+      await loadMobileDownloadCenter();
+    } catch (err) {
+      feedback.className = 'rounded-xl p-3 text-xs bg-rose-950/70 border border-rose-700 text-rose-200';
+      feedback.innerHTML = `<strong>❌ Error de validación:</strong> ${escapeHtml(err.message)}`;
+      showToast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<span>🚀</span> <span>Validar, Firmar Hash y Publicar APK</span>';
+    }
+  });
 }
