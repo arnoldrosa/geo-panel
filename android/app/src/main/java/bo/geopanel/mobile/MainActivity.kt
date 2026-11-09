@@ -5,12 +5,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import bo.geopanel.mobile.ui.GeoPanelAdaptiveApp
 import bo.geopanel.mobile.ui.screens.PairingScreen
@@ -52,10 +55,15 @@ class MainActivity : ComponentActivity() {
             }
 
             MaterialTheme(colorScheme = colorScheme) {
-                if (!isPaired) {
-                    PairingScreen(onPairingSuccess = { isPaired = true })
-                } else {
-                    GeoPanelAdaptiveApp(windowSizeClass = windowSizeClass)
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    if (!isPaired) {
+                        PairingScreen(onPairingSuccess = { isPaired = true })
+                    } else {
+                        GeoPanelAdaptiveApp(windowSizeClass = windowSizeClass)
+                    }
                 }
             }
         }
