@@ -256,6 +256,8 @@ async function enterApp() {
     ? 'text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
     : 'text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30';
 
+  document.getElementById('tab-btn-map').classList.remove('hidden');
+  document.getElementById('tab-btn-mobile').classList.remove('hidden');
   document.getElementById('tab-btn-companies').classList.toggle('hidden', !isSuper);
   document.getElementById('tab-btn-traccar').classList.toggle('hidden', !isSuper);
   document.getElementById('superadmin-company-filter-box').classList.toggle('hidden', !isSuper);
@@ -335,10 +337,12 @@ function switchTab(tabName) {
     const btn = document.getElementById(`tab-btn-${t}`);
     if (el) el.classList.toggle('hidden', t !== tabName);
     if (btn) {
+      const isHidden = btn.classList.contains('hidden');
+      const baseClass =
+        'flex-1 sm:flex-initial whitespace-nowrap px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition text-center';
       btn.className =
-        t === tabName
-          ? 'px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 text-white transition'
-          : 'px-3 py-1 rounded-lg text-xs font-semibold text-slate-300 hover:text-white transition';
+        (t === tabName ? `${baseClass} bg-emerald-600 text-white` : `${baseClass} text-slate-300 hover:text-white`) +
+        (isHidden ? ' hidden' : '');
     }
   }
   if (tabName === 'map' && map) {
