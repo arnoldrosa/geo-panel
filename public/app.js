@@ -105,6 +105,34 @@ function setupForms() {
     }
   });
 
+  // 3.2 Crear Nuevo Usuario / SuperAdmin independientemente
+  const createUserForm = document.getElementById('create-user-form');
+  if (createUserForm) {
+    createUserForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const role = document.getElementById('new-user-role').value;
+        const payload = {
+          name: document.getElementById('new-user-name').value,
+          email: document.getElementById('new-user-email').value,
+          password: document.getElementById('new-user-pass').value,
+          role,
+          companyId: role === 'SUPERADMIN' ? null : document.getElementById('new-user-company').value
+        };
+        await apiFetch('/api/users', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        e.target.reset();
+        toggleNewUserCompanySelect();
+        await loadCompaniesAndAssignments();
+        showToast(`Usuario ${payload.email} (${role}) creado con éxito`, 'success');
+      } catch (err) {
+        showToast('Error al crear usuario: ' + err.message, 'error');
+      }
+    });
+  }
+
   // 4. Modal Añadir / Editar Dispositivo (Celular o GPS)
   document.getElementById('device-modal-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -894,11 +922,78 @@ async function loadCompaniesAndAssignments() {
 
     if (currentUser?.role !== 'SUPERADMIN') return;
 
+    const newUserCompSelect = document.getElementById('new-user-company');
+    if (newUserCompSelect) {
+      newUserCompSelect.innerHTML = allCompanies
+        .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
+        .join('');
+    }
+
     const compBody = document.getElementById('companies-table-body');
+    const usersBody = document.getElementById('users-table-body');
     const users = data.users || [];
+
+    if (usersBody) {
+      const roleBadges = {
+        SUPERADMIN: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">👑 SUPERADMIN</span>',
+        COMPANY_ADMIN: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">🏢 COMPANY_ADMIN</span>',
+        OPERATOR: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700 text-slate-300 border border-slate-600">👁️ OPERATOR</span>'
+      };
+
+      usersBody.innerHTML = users
+        .map((u) => {
+          const isSelf = currentUser && u.id === currentUser.id;
+          const comp = allCompanies.find((c) => c.id === u.companyId);
+          const compLabel = u.role === 'SUPERADMIN' ? '🌐 Plataforma Global' : (comp ? comp.name : 'Sin empresa');
+          const badge = roleBadges[u.role] || `<span class="text-xs text-slate-400">${escapeHtml(u.role)}</span>`;
+
+          return `
+            <div class="p-3 rounded-xl bg-slate-800/70 border border-slate-700/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="space-y-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-bold text-xs text-white">${escapeHtml(u.name || u.email)}</span>
+                  ${badge}
+                  ${isSelf ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300">Tú (Sesión activa)</span>' : ''}
+                </div>
+                <div class="text-xs text-slate-300 font-mono">${escapeHtml(u.email)}</div>
+                <div class="text-[11px] text-slate-400">${escapeHtml(compLabel)}</div>
+              </div>
+              <div class="flex items-center gap-2">
+                ${
+                  isSelf
+                    ? `<button disabled title="No puedes eliminar tu propio usuario en sesión"
+                         class="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-500 text-xs font-semibold cursor-not-allowed">
+                         🔒 En uso
+                       </button>`
+                    : `<button onclick="deleteUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}')"
+                         class="px-3 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900 border border-rose-800 text-rose-200 text-xs font-semibold transition flex items-center gap-1">
+                         <span>🗑️</span> <span>Eliminar</span>
+                       </button>`
+                }
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
     compBody.innerHTML = allCompanies
       .map((c) => {
         const compUsers = users.filter((u) => u.companyId === c.id);
+        const compUsersHtml = compUsers.length
+          ? compUsers
+              .map(
+                (u) => `
+                  <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-[11px]">
+                    <span>${escapeHtml(u.email)}</span>
+                    <button onclick="deleteUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}')" title="Eliminar usuario"
+                      class="text-rose-400 hover:text-rose-300 font-bold ml-1">✕</button>
+                  </span>
+                `
+              )
+              .join(' ')
+          : '<strong class="text-slate-400">Sin usuario</strong>';
+
         return `
           <div class="p-3.5 rounded-xl bg-slate-800/70 border border-slate-700/70 space-y-1.5">
             <div class="flex items-center justify-between">
@@ -909,8 +1004,8 @@ async function loadCompaniesAndAssignments() {
             </div>
             <div class="text-xs text-slate-400">NIT: ${escapeHtml(c.nit)} · 📞 ${escapeHtml(c.phone || 'S/N')}</div>
             <div class="text-xs text-sky-400">${escapeHtml(c.plan)}</div>
-            <div class="text-xs text-slate-400 pt-1 border-t border-slate-700/60">
-              👤 Acceso cliente: <strong class="text-slate-200">${compUsers.map((u) => u.email).join(', ') || 'Sin usuario'}</strong>
+            <div class="text-xs text-slate-400 pt-1.5 border-t border-slate-700/60 flex flex-wrap items-center gap-1.5">
+              <span>👤 Acceso cliente:</span> ${compUsersHtml}
             </div>
           </div>
         `;
@@ -972,6 +1067,32 @@ async function assignVehicleCompany(vehicleId, companyId) {
     showToast('Vehículo asignado a empresa correctamente', 'success');
   } catch (err) {
     showToast('No se pudo asignar el vehículo: ' + err.message, 'error');
+  }
+}
+
+function toggleNewUserCompanySelect() {
+  const roleEl = document.getElementById('new-user-role');
+  const wrapEl = document.getElementById('new-user-company-wrap');
+  if (!roleEl || !wrapEl) return;
+  if (roleEl.value === 'SUPERADMIN') {
+    wrapEl.classList.add('hidden');
+  } else {
+    wrapEl.classList.remove('hidden');
+  }
+}
+
+async function deleteUser(userId, userEmail) {
+  if (!confirm(`¿Estás seguro de que deseas eliminar al usuario "${userEmail}"?\nEsta acción cerrará sus sesiones activas y revocará su acceso de inmediato.`)) {
+    return;
+  }
+  try {
+    await apiFetch(`/api/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE'
+    });
+    showToast(`Usuario ${userEmail} eliminado correctamente`, 'success');
+    await loadCompaniesAndAssignments();
+  } catch (err) {
+    showToast('No se pudo eliminar el usuario: ' + err.message, 'error');
   }
 }
 

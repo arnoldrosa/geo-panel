@@ -64,6 +64,7 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.USER_CREATE,
     PERMISSIONS.USER_READ,
     PERMISSIONS.USER_UPDATE,
+    PERMISSIONS.USER_DELETE,
     PERMISSIONS.DEVICE_CREATE,
     PERMISSIONS.DEVICE_READ,
     PERMISSIONS.DEVICE_UPDATE,
@@ -1733,6 +1734,117 @@ const server = http.createServer(async (req, res) => {
         try { await telemetryRepository.syncCompany(newCompany); } catch (_) {}
       }
       return sendJson(res, 201, { company: newCompany });
+    }
+
+    // 7.2 CREAR NUEVO USUARIO (RBAC: SUPERADMIN, COMPANY_ADMIN, OPERATOR)
+    if (pathname === '/api/users' && req.method === 'POST') {
+      const user = getAuthUser(req, db);
+      if (!user || !hasPermission(user, PERMISSIONS.USER_CREATE)) {
+        return sendJson(res, 403, { error: 'Acceso denegado: No tiene permiso para crear usuarios' });
+      }
+      const { name, email, password, role, companyId } = await parseBody(req);
+      const cleanEmail = String(email || '').trim().toLowerCase();
+      if (!cleanEmail || !password) {
+        return sendJson(res, 400, { error: 'El correo electrónico y la contraseña son obligatorios' });
+      }
+      if (db.users.some((u) => u.email.toLowerCase() === cleanEmail)) {
+        return sendJson(res, 409, { error: 'Ya existe un usuario registrado con ese correo electrónico' });
+      }
+
+      const validRoles = [ROLES.SUPERADMIN, ROLES.COMPANY_ADMIN, ROLES.OPERATOR];
+      let targetRole = validRoles.includes(role) ? role : ROLES.COMPANY_ADMIN;
+      let targetCompanyId = companyId || null;
+
+      if (user.role !== ROLES.SUPERADMIN) {
+        if (targetRole === ROLES.SUPERADMIN) targetRole = ROLES.OPERATOR;
+        targetCompanyId = user.companyId;
+      } else if (targetRole === ROLES.SUPERADMIN) {
+        targetCompanyId = null;
+      }
+
+      const newUser = {
+        id: `usr-${Date.now()}`,
+        name: String(name || cleanEmail.split('@')[0]).trim(),
+        email: cleanEmail,
+        password: hashPassword(password),
+        role: targetRole,
+        companyId: targetCompanyId,
+        isActive: true
+      };
+
+      db.users.push(newUser);
+      saveDb(db);
+
+      try {
+        const pg = require('./db/pg.js');
+        if (pg.isConnected()) {
+          await pg.query(
+            `INSERT INTO users (id, company_id, name, email, password_hash, role, is_active)
+             VALUES (gen_random_uuid(), NULL, $1, $2, $3, $4, true)
+             ON CONFLICT (email) DO UPDATE SET
+               name = EXCLUDED.name,
+               password_hash = EXCLUDED.password_hash,
+               role = EXCLUDED.role,
+               is_active = true`,
+            [newUser.name, newUser.email, newUser.password, newUser.role]
+          );
+        }
+      } catch (_) {}
+
+      return sendJson(res, 201, {
+        user: {
+          id: newUser.id,
+          name: newUser.name,
+          email: newUser.email,
+          role: newUser.role,
+          companyId: newUser.companyId,
+          isActive: true
+        }
+      });
+    }
+
+    // 7.3 ELIMINAR USUARIO
+    if (pathname.startsWith('/api/users/') && req.method === 'DELETE') {
+      const user = getAuthUser(req, db);
+      if (!user || !hasPermission(user, PERMISSIONS.USER_DELETE)) {
+        return sendJson(res, 403, { error: 'Acceso denegado: No tiene permiso para eliminar usuarios' });
+      }
+      const targetId = decodeURIComponent(pathname.split('/')[3] || '');
+      const targetUser = db.users.find((u) => u.id === targetId || u.email.toLowerCase() === targetId.toLowerCase());
+      if (!targetUser) {
+        return sendJson(res, 404, { error: 'Usuario no encontrado' });
+      }
+      if (targetUser.id === user.id) {
+        return sendJson(res, 400, { error: 'Por seguridad no puedes eliminar tu propia cuenta con sesión activa' });
+      }
+      if (user.role !== ROLES.SUPERADMIN && targetUser.companyId !== user.companyId) {
+        return sendJson(res, 403, { error: 'No tiene permiso para eliminar usuarios de otra empresa' });
+      }
+      if (targetUser.role === ROLES.SUPERADMIN) {
+        const superAdminCount = db.users.filter((u) => u.role === ROLES.SUPERADMIN && u.isActive !== false).length;
+        if (superAdminCount <= 1) {
+          return sendJson(res, 400, { error: 'No se puede eliminar al único SUPERADMIN activo del sistema' });
+        }
+      }
+
+      db.users = db.users.filter((u) => u.id !== targetUser.id);
+      if (db.sessions) {
+        for (const [tok, sess] of Object.entries(db.sessions)) {
+          if (sess && sess.userId === targetUser.id) {
+            delete db.sessions[tok];
+          }
+        }
+      }
+      saveDb(db);
+
+      try {
+        const pg = require('./db/pg.js');
+        if (pg.isConnected()) {
+          await pg.query('DELETE FROM users WHERE LOWER(email) = LOWER($1)', [targetUser.email]);
+        }
+      } catch (_) {}
+
+      return sendJson(res, 200, { ok: true, deletedId: targetUser.id, email: targetUser.email });
     }
 
     // 8. CREAR NUEVO DISPOSITIVO
