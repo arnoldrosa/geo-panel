@@ -725,6 +725,9 @@ function openDeviceModal(vehicleId = null) {
     .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
     .join('');
 
+  const disabledWrap = document.getElementById('dm-disabled-wrap');
+  const otpWrap = document.getElementById('dm-otp-wrap');
+
   if (vehicleId) {
     const v = allVehicles.find((item) => item.id === vehicleId);
     if (v) {
@@ -741,10 +744,20 @@ function openDeviceModal(vehicleId = null) {
         ? v.expirationTime.slice(0, 10)
         : '';
       document.getElementById('dm-disabled').checked = !!v.disabled;
+
+      // Al editar: sí mostrar la opción de suspender/deshabilitar y el botón de vincular OTP
+      if (disabledWrap) disabledWrap.classList.remove('hidden');
+      if (otpWrap) otpWrap.classList.remove('hidden');
     }
   } else {
     document.getElementById('device-modal-title').textContent = '📱 Añadir Nuevo Dispositivo (Celular o GPS)';
     document.getElementById('dm-id').value = '';
+    document.getElementById('dm-disabled').checked = false;
+
+    // Al registrar nuevo: OCULTAR opción de suspender (nace siempre activo) y botón OTP hasta guardar
+    if (disabledWrap) disabledWrap.classList.add('hidden');
+    if (otpWrap) otpWrap.classList.add('hidden');
+
     // Por defecto vencimiento en 1 año
     const nextYear = new Date();
     nextYear.setFullYear(nextYear.getFullYear() + 1);

@@ -1123,14 +1123,14 @@
               <input id="dm-expiration" type="date"
                 class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white" />
             </div>
-            <label class="flex items-center gap-2 text-xs text-slate-200 cursor-pointer pt-4">
+            <label id="dm-disabled-wrap" class="flex items-center gap-2 text-xs text-slate-200 cursor-pointer pt-4">
               <input id="dm-disabled" type="checkbox" class="accent-rose-500 w-4 h-4" />
               <span>Deshabilitado / Suspendido</span>
             </label>
           </div>
 
           <!-- Botón CÓDIGO QR de Vinculación Temporal (OTP - OT-006) -->
-          <div class="pt-2 flex gap-2">
+          <div id="dm-otp-wrap" class="pt-2 flex gap-2">
             <button type="button" onclick="generateDevicePairingOtp()"
               class="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold tracking-wider uppercase text-sky-300 transition flex items-center justify-center gap-1.5">
               <span>📲</span> <span>Vincular por QR / OTP (10m)</span>
